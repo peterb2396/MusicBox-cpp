@@ -19,7 +19,8 @@ const int MAX_PLAYLIST_LEN = 48;
 // Authorization tokens (fetched once wifi connects)
 char access_token[256];
 char refresh_token[256];
-int firmware_version = 0;
+int firmware_version = -1;
+int temp_version = -1;
 
 // Custom Parameter Values (overwritten when loadConfig)
 char musicbox_username[MAX_USERNAME_LEN];
@@ -45,14 +46,18 @@ int mode = 1;
 
 void checkForUpdates() {
   HTTPClient http;
-  http.begin("http://52.86.18.252/check-for-update");
+  http.begin("http://52.7.199.236:3000/version");
 
   int httpCode = http.GET();
   if (httpCode == HTTP_CODE_OK) {
     // Parse the server response to get update information
-    int latestVersion = 0;//http.getString()["version"];
+    String version_str = http.getString();
+    int latestVersion = version_str.toInt();
+
     if (latestVersion > firmware_version) {
       Serial.println("Update available!");
+      // Store the version number so we can save it if success
+      temp_version = latestVersion;
       // Retrieve the download link and update the firmware
       updateFirmware();
     } else {
@@ -69,7 +74,7 @@ void updateFirmware() {
   Serial.println("Updating firmware...");
 
   WiFiClient client;
-  t_httpUpdate_return ret = httpUpdate.update(client, "http://52.86.18.252/public/firmware.bin");
+  t_httpUpdate_return ret = httpUpdate.update(client, "http://52.7.199.236:3000/uploads/musicbox.bin");
 
   switch (ret) {
       case HTTP_UPDATE_FAILED:
@@ -96,6 +101,12 @@ void update_started() {
 
 void update_finished() {
   Serial.println("CALLBACK:  HTTP update process finished");
+
+  // Store the new version
+  firmware_version = temp_version;
+  saveConfig();
+  // delay(1500);
+  // ESP.restart();
 }
 
 void update_progress(int cur, int total) {
@@ -294,7 +305,7 @@ String getCurrentPlayingTrackURI() {
       if (httpResponseCode == 401)
       {
         Serial.println("Token expired, refreshing...");
-        String newRefreshToken = refreshAccessToken(refresh_token);
+        String newRefreshToken = refreshAccessToken();
 
         // Convert String to char array and assign it to refresh_token
         newRefreshToken.toCharArray(refresh_token, sizeof(refresh_token));  
@@ -336,7 +347,7 @@ String getCurrentPlayingTrackURI() {
 
 
 // Function to refresh the Spotify access token
-String refreshAccessToken(String refreshToken) {
+String refreshAccessToken() {
   HTTPClient http;
  String tokenURL = "https://accounts.spotify.com/api/token";
   String base64encoded = base64::encode(String(clientID) + ":" + String(clientSecret));
@@ -345,7 +356,7 @@ String refreshAccessToken(String refreshToken) {
   http.addHeader("Authorization", "Basic " + base64encoded);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
-  String requestBody = "grant_type=refresh_token&refresh_token=" + String(refreshToken);
+  String requestBody = "grant_type=refresh_token&refresh_token=" + String(refresh_token);
   
   int httpResponseCode = http.POST(requestBody);
 
@@ -421,7 +432,7 @@ void loadConfig()
           strcpy(refresh_token, json["refresh_token"]);
 
           // Firmware Version
-          //strcpy(firmware_version, json["firmware_version"]);
+          firmware_version = json["firmware_version"];
 
           // Update the parameter values
           custom_musicbox_username.setValue(musicbox_username, MAX_USERNAME_LEN);
@@ -462,7 +473,7 @@ void saveConfig()
     json["refresh_token"] = refresh_token;
 
     // Store latest Firmware Version
-    //json["firmware_version"] = firmware_version;
+    json["firmware_version"] = firmware_version;
 
     File configFile = SPIFFS.open("/config.json", "w");
     if (!configFile) {
@@ -496,7 +507,6 @@ void initializeConfigPortal(WiFiManager *wifiManager)
     wifiManager->addParameter(&custom_musicbox_playlist_2);
 
   }
-  
 
 
   // Set callback to reset settings
@@ -525,8 +535,7 @@ void closedConfigPortal(WiFiManager *wifiManager)
   httpUpdate.onProgress(update_progress);
   httpUpdate.onError(update_error);
 
-  //checkForUpdates();
-  updateFirmware(); // Checks for updates
+  checkForUpdates(); // Checks for updates
 
   // Set the spotify tokens if we dont have them
   if (strlen(access_token) < 2)
@@ -610,7 +619,7 @@ void closedConfigPortal(WiFiManager *wifiManager)
   }
 
   // Here we're good! Saves all data, including access and refresh tokens.
-  saveConfig();
+  saveConfig(); // Will also store new version, if we updated
 
   // Connected to wifi! Will this detect its own network???
   if (WiFi.status() == WL_CONNECTED) {
@@ -635,7 +644,7 @@ void setup() {
   pinMode(greenPin, OUTPUT);
   pinMode(bluePin, OUTPUT);
 
-  loadConfig(); // Load the custom data such as user login details, playlists, etc
+  loadConfig(); // Load the custom data such as user login details, playlists, version, etc
 
 
   // Create an instance of WiFiManager
