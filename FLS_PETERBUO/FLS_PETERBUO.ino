@@ -13,14 +13,17 @@
 
 #include <WiFi.h>
 const int MAX_USERNAME_LEN = 32;
-const int MAX_PASSWORD_LEN = 32;
+const int MAX_PASSWORD_LEN = 48;
 const int MAX_PLAYLIST_LEN = 48;
 
 // Authorization tokens (fetched once wifi connects)
 char access_token[256];
-char refresh_token[256];
+char refresh_token[132];
 int firmware_version = -1;
 int temp_version = -1;
+
+// Built By Peter login api
+const char * bbp_auth_url = "http://52.86.18.252:3001/authorize_musicbox";
 
 // Custom Parameter Values (overwritten when loadConfig)
 char musicbox_username[MAX_USERNAME_LEN];
@@ -41,6 +44,7 @@ const int buttonPin = 34; // GPIO pin where the button is connected
 const int redPin = 27;    // GPIO pin for the red LED
 const int greenPin = 32; // GPIO pin for the green LED
 const int bluePin = 4;  // GPIO pin for the blue LED
+const int playlistPin = 35; // GPIO for playlist toggle
 
 int mode = 1;
 
@@ -195,55 +199,158 @@ void saveConfigCallback () {
 
 const unsigned long configModeDuration = 2000; // 2 seconds in milliseconds
 
-
-
 String clientID = "fffd853196474a44bb86a4d17717faab";
 String clientSecret = "606bd9a5cbdc46afbd7841996e3feaef"; 
 
-// Function to create a playlist on Spotify
-void createPlaylist(String playlistName) {
-  HTTPClient http;
 
-  // Spotify API endpoint to create a playlist
-  String url = "https://api.spotify.com/v1/me/playlists";
+String getSelectedPlaylist() {
 
-  String jsonPayload = "{\"name\":\"" + playlistName + "\",\"public\":true}";
+  // Choose playlist based on GPIO pin state
+  if (digitalRead(playlistPin) == HIGH)
+    return musicbox_playlist_1;
+    return musicbox_playlist_2;
 
-  http.begin(url);
+}
+
+// Check if the given song is in the provided playlist
+bool isTrackInPlaylist(const String& trackId, const String& playlistId) {
+  // Check if the track is in the playlist using Spotify API
+  String url = "https://api.spotify.com/v1/playlists/" + playlistId + "/tracks";
   String authorizationHeader = "Bearer " + String(access_token);
 
-  http.addHeader("Authorization", authorizationHeader.c_str());
-  http.addHeader("Content-Type", "application/json");
+  HTTPClient http;
 
-  int httpResponseCode = http.POST(jsonPayload);
+  http.begin(url);
+  http.addHeader("Authorization", authorizationHeader.c_str());
+
+  int httpResponseCode = http.GET();
 
   if (httpResponseCode > 0) {
-    if (httpResponseCode == HTTP_CODE_CREATED) {
-      Serial.println("Playlist created successfully!");
+    if (httpResponseCode == HTTP_CODE_OK) {
+      String response = http.getString();
+
+      // Check if the track ID is present in the playlist response
+      return response.indexOf(trackId) != -1;
     } else {
-      Serial.print("Failed to create playlist. Error code: ");
+      Serial.print("Failed to get playlist tracks: ");
       Serial.println(httpResponseCode);
     }
   } else {
-    Serial.print("Error occurred: ");
+    Serial.print("Error occurred during HTTP request for playlist tracks: ");
     Serial.println(http.errorToString(httpResponseCode).c_str());
   }
 
   http.end();
+  return false;
 }
 
 // Get or create the currently selected playlist (1 or 2)
 // Return the ID
-String getOrCreatePlaylist()
-{
-  return ""; // TODO
+String getOrCreatePlaylist(String playlistName, HTTPClient& httpClient) {
+  String url = "https://api.spotify.com/v1/me/playlists?limit=50";
+
+  httpClient.begin(url);
+  String authorizationHeader = "Bearer " + String(access_token);
+  httpClient.addHeader("Authorization", authorizationHeader.c_str());
+
+  int httpResponseCode = httpClient.GET();
+
+  if (httpResponseCode > 0) {
+    if (httpResponseCode == HTTP_CODE_OK) {
+      String response = httpClient.getString();
+
+      // Look for the playlist, check if it exists
+      String searchString = "\"" + String(playlistName) + "\"";
+      int endIndex = response.indexOf(searchString);
+
+      // Playlist did not exist, make it
+      if (endIndex == -1) {
+        // Playlist does not exist, create it
+        String url2 = "https://api.spotify.com/v1/me/playlists";
+        httpClient.begin(url2);
+
+        char jsonPayload[100];
+        snprintf(jsonPayload, sizeof(jsonPayload), "{\"name\":\"%s\",\"public\":true}", playlistName.c_str());
+
+        httpClient.addHeader("Authorization", authorizationHeader.c_str());
+        int httpResponseCode2 = httpClient.POST(jsonPayload);
+
+        // Playlist created successfully (It did not exist previously)
+        if (httpResponseCode2 > 0) {
+          if (httpResponseCode2 == HTTP_CODE_CREATED) {
+            String response = httpClient.getString();
+
+            // Find the new playlist's ID by its name
+            int endIndex = response.indexOf(searchString);
+            String playlist = extractPlaylistID(response, endIndex);
+
+            Serial.print("Newly created playlist: ");
+            Serial.println(playlist);
+
+            // End the second HTTP request
+            httpClient.end();
+
+            return playlist;
+          }
+        } else {
+          Serial.println("HTTP Error creating playlist");
+        }
+
+        // End the second HTTP request in case of an error
+        httpClient.end();
+      } else {
+        // Playlist exists! Get the id.
+        String playlist = extractPlaylistID(response, endIndex);
+        Serial.print("Existing playlist: ");
+        Serial.println(playlist);
+
+        return playlist;
+      }
+    } else {
+      Serial.print("Failed to get playlists: ");
+      Serial.println(httpResponseCode);
+    }
+  } else {
+    Serial.print("Error occurred during HTTP for get playlists: ");
+    Serial.println(httpClient.errorToString(httpResponseCode).c_str());
+  }
+
+  // End the first HTTP request
+  httpClient.end();
+
+  return "";
+}
+
+
+String extractPlaylistID(const String& response, int endIndex) {
+  String substring = "\"id\" : ";
+
+  // Search the string in reverse order
+  for (int i = endIndex - substring.length(); i >= 0; --i) {
+    if (response.substring(i, i + substring.length()) == substring) {
+      int idStartIndex = i + substring.length() + 1; // Move to the beginning of the ID value
+      int idEndIndex = response.indexOf("\"", idStartIndex);
+
+      return response.substring(idStartIndex, idEndIndex);
+    }
+  }
+
+  
 }
 
 // Function to add a track to a playlist on Spotify
 void addTrackToPlaylist(String trackURI) {
   HTTPClient http;
+  String playlistID = getOrCreatePlaylist(getSelectedPlaylist(), http);
 
-  String url = "https://api.spotify.com/v1/playlists/" + getOrCreatePlaylist() + "/tracks";
+  // Check if the song is in the playlist already
+  if(isTrackInPlaylist(trackURI, playlistID))
+  {
+    Serial.println("Song already in playlist, ignoring...");
+    return; // Already in
+  }
+
+  String url = "https://api.spotify.com/v1/playlists/" + playlistID + "/tracks";
   String jsonPayload = "{\"uris\":[\"" + trackURI + "\"]}";
 
   http.begin(url);
@@ -286,33 +393,40 @@ String getCurrentPlayingTrackURI() {
 
   if (httpResponseCode > 0) {
     if (httpResponseCode == HTTP_CODE_OK) {
-      String payload = http.getString();
+      String response = http.getString();
 
-      DynamicJsonDocument doc(2048); // Adjust the size as needed
-      DeserializationError error = deserializeJson(doc, payload);
+      int startIndex = response.indexOf("spotify:track:");
+      int endIndex = response.indexOf("\"", startIndex);
 
-      if (!error) {
-        if (doc["is_playing"].as<bool>()) {
-          trackURI = doc["item"]["uri"].as<String>();
-        } else {
-          Serial.println("No track is currently playing.");
-        }
-      } else {
-        Serial.println("Failed to parse JSON response.");
-      }
+      String result = response.substring(startIndex, endIndex + 1);
+      // Remove quotes from the result
+      result.replace("\"", "");
+
+      trackURI = result;
+
     } else {
       // Here, check if we need to refresh the token
-      if (httpResponseCode == 401)
+      if (httpResponseCode == 401 || strlen(access_token) < 2)
       {
         Serial.println("Token expired, refreshing...");
-        String newRefreshToken = refreshAccessToken();
+        String newAccessToken = refreshAccessToken();
+        if (newAccessToken)
+        {
+          // Convert String to char array and assign it to access_token
+          newAccessToken.toCharArray(access_token, sizeof(access_token));  
+          saveConfig(); // Store the new access token
 
-        // Convert String to char array and assign it to refresh_token
-        newRefreshToken.toCharArray(refresh_token, sizeof(refresh_token));  
-        saveConfig(); // Store the new access token
+          // Try the request again (recursive)
+          trackURI = getCurrentPlayingTrackURI();
 
-        // Try the request again (recursive)
-        trackURI = getCurrentPlayingTrackURI();
+        }
+
+        
+      }
+      else if (httpResponseCode == HTTP_CODE_NO_CONTENT)
+      {
+        // No track playing
+        Serial.println("No track is currently playing.");
       }
       else
       {
@@ -357,6 +471,7 @@ String refreshAccessToken() {
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
   String requestBody = "grant_type=refresh_token&refresh_token=" + String(refresh_token);
+  Serial.println(requestBody);
   
   int httpResponseCode = http.POST(requestBody);
 
@@ -367,6 +482,9 @@ String refreshAccessToken() {
   if (httpResponseCode > 0) {
     if (httpResponseCode == HTTP_CODE_OK) {
       String payload = http.getString();
+      Serial.print("Refresh result: ");
+      Serial.println(payload);
+
 
       DynamicJsonDocument doc(1024); // Adjust the size as needed
       DeserializationError error = deserializeJson(doc, payload);
@@ -377,7 +495,7 @@ String refreshAccessToken() {
         Serial.println("Failed to parse JSON response.");
       }
     } else {
-      Serial.print("HTTP request failed with error code: ");
+      Serial.print("Refresh Token request failed with error code: ");
       Serial.println(httpResponseCode);
     }
   } else {
@@ -538,7 +656,7 @@ void closedConfigPortal(WiFiManager *wifiManager)
   checkForUpdates(); // Checks for updates
 
   // Set the spotify tokens if we dont have them
-  if (strlen(access_token) < 2)
+  if (strlen(refresh_token) < 2)
   {
     // Need to get the tokens from my server
     bool fail = true;
@@ -548,44 +666,46 @@ void closedConfigPortal(WiFiManager *wifiManager)
       // Request tokens from my server
       HTTPClient http;
 
-      // Built By Peter login api
-      String url = "http://52.86.18.252/authorize_musicbox";
 
-      String jsonPayload = "{\"username\":\"" + String(musicbox_username) + "\",\"password\":" + String(musicbox_password) + "}";
+      String jsonPayload = "{\"username\":\"" + String(musicbox_username) + "\",\"pass\":\"" + String(musicbox_password) + "\"}";
 
-      http.begin(url);
+
+      http.begin(bbp_auth_url);
       http.addHeader("Content-Type", "application/json");
 
       int httpResponseCode = http.POST(jsonPayload);
 
       if (httpResponseCode > 0) {
         if (httpResponseCode == HTTP_CODE_OK) {
-          Serial.println("Successfully recieved spotify auth data!");  
-          String payload = http.getString();
-
-          DynamicJsonDocument doc(2048); // Adjust the size as needed
-          DeserializationError error = deserializeJson(doc, payload);
-
-          const char* accessTokenString = doc["access_token"];
-          // Use strncpy to copy the string to access_token
-          strncpy(access_token, accessTokenString, sizeof(access_token));
-
-          const char* refreshTokenString = doc["refresh_token"];
-
+          Serial.println("Successfully recieved spotify auth data!"); 
+          String res = http.getString();
+          Serial.println(res);
+          
           // Use strncpy to copy the string to refresh_token
-          strncpy(refresh_token, refreshTokenString, sizeof(refresh_token));   
-
+          strcpy(refresh_token, res.c_str()); 
+          res = "";  
           fail = false;
-          // Done. We have the data, must still save it (handled by saveConfig())
+
+          
         } else {
-          // Failure: user did not authenticate on website
+          Serial.print("Failed to authorize with BBP account: ");
+          Serial.println(httpResponseCode);
+          
           if (httpResponseCode == HTTP_CODE_UNAUTHORIZED)
           {
-            Serial.print("User has a BBP account but did not connect their spotify");
+            Serial.println("(Wrong account password!)");
+          }
+          else if (httpResponseCode == HTTP_CODE_NOT_FOUND)
+          {
+            Serial.println("(User not found)");
+          }
+          else if (httpResponseCode == HTTP_CODE_ACCEPTED)
+          {
+            Serial.println("(User did not link their Spotify yet)");
           }
           
-          Serial.print("Failed to hit authorize endpoint: ");
-          Serial.println(httpResponseCode);
+
+          
         }
       } else {
         Serial.print("Error trying to auth with BuiltByPeter: ");
@@ -594,6 +714,7 @@ void closedConfigPortal(WiFiManager *wifiManager)
       }
 
       http.end();
+      jsonPayload = "";
 
     }
 
