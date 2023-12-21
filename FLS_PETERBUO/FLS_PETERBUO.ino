@@ -16,6 +16,10 @@ const int MAX_USERNAME_LEN = 32;
 const int MAX_PASSWORD_LEN = 48;
 const int MAX_PLAYLIST_LEN = 48;
 
+// Create an instance of WiFiManager
+WiFiManager wifiManager;
+bool configOpen = false;
+
 // Authorization tokens (fetched once wifi connects)
 char access_token[256];
 char refresh_token[132];
@@ -122,14 +126,13 @@ void update_error(int err) {
 }
 
 
-// const char* spotifyClientId = "fffd853196474a44bb86a4d17717faab";
-// const char* spotifyClientSecret = "606bd9a5cbdc46afbd7841996e3feaef";
-// const char* spotifyRedirectUri = "http://192.168.4.1/callback";
+// Mode 0 is setup (blue)
+// Mode 1 is ready (green)
+// Mode 2 is error (red)
+// Mode 3 is booting (purple)
 void lights(int mode_in) {
   mode = mode_in;
-  // Mode 0 is setup (blue)
-  // Mode 1 is ready (green)
-  // Mode 2 is error (red)
+  
 
   if (mode == 0) {
     digitalWrite(redPin, LOW);
@@ -142,10 +145,7 @@ void lights(int mode_in) {
     digitalWrite(bluePin, LOW);
   }
   else if (mode == 2) {
-    digitalWrite(redPin, HIGH);
-    digitalWrite(greenPin, LOW);
-    digitalWrite(bluePin, LOW);
-
+    lights(4);
     delay(100);
     lights(-1);
     delay(100);
@@ -179,7 +179,6 @@ void lights(int mode_in) {
 void resetSettings()
 {
   // Callback function to reset WiFi settings
-  WiFiManager wifiManager;
   wifiManager.resetSettings();
   delay(1000);
   ESP.restart();
@@ -420,6 +419,11 @@ String getCurrentPlayingTrackURI() {
           trackURI = getCurrentPlayingTrackURI();
 
         }
+        else
+        {
+          // Error getting access token
+          displayError(false);
+        }
 
         
       }
@@ -427,37 +431,44 @@ String getCurrentPlayingTrackURI() {
       {
         // No track playing
         Serial.println("No track is currently playing.");
+        displayError(false);
       }
       else
       {
         // Unknown error
         Serial.print("Get current playing FAILED with code ");
         Serial.println(httpResponseCode);
-        lights(2);
+        displayError(true);
 
-        lights(1); // back to green
 
-        // RESTART ON ERROR
-        //ESP.restart();
-        //delay(1000);
       }
       
     }
   } else {
     Serial.println("Error occurred during HTTP request.");
-    lights(2);
+    displayError(true);
 
-    lights(1); // back to green
-
-    // RESTART ON ERROR
-    // ESP.restart();
-    //delay(1000);
   }
 
   http.end();
   return trackURI;
 }
 
+// Error function:
+// Flash red. If fatal = true, open setup portal
+void displayError(bool fatal)
+{
+  lights(2);
+  if (fatal)
+  {
+    initializeConfigPortal();
+    wifiManager.startConfigPortal("MusicBox Setup");
+  }
+  else
+  {
+    lights(1); //Not a fatal error: Back to ready state
+  }
+}
 
 
 // Function to refresh the Spotify access token
@@ -482,8 +493,6 @@ String refreshAccessToken() {
   if (httpResponseCode > 0) {
     if (httpResponseCode == HTTP_CODE_OK) {
       String payload = http.getString();
-      Serial.print("Refresh result: ");
-      Serial.println(payload);
 
 
       DynamicJsonDocument doc(1024); // Adjust the size as needed
@@ -515,13 +524,13 @@ void loadConfig()
   Serial.println("mounting FS...");
 
   if (SPIFFS.begin()) {
-    Serial.println("mounted file system");
+    //Serial.println("mounted file system");
     if (SPIFFS.exists("/config.json")) {
       //file exists, reading and loading
-      Serial.println("reading config file");
+      //Serial.println("reading config file");
       File configFile = SPIFFS.open("/config.json", "r");
       if (configFile) {
-        Serial.println("opened config file");
+        //Serial.println("opened config file");
         size_t size = configFile.size();
         // Allocate a buffer to store contents of the file.
         std::unique_ptr<char[]> buf(new char[size]);
@@ -536,10 +545,12 @@ void loadConfig()
 #else
         DynamicJsonBuffer jsonBuffer;
         JsonObject& json = jsonBuffer.parseObject(buf.get());
-        json.printTo(Serial);
+        // Display the loaded json data (config)
+        //json.printTo(Serial);
+
         if (json.success()) {
 #endif
-          Serial.println("\nparsed json");
+          // Update the local values to the stored
           strcpy(musicbox_username, json["musicbox_username"]);
           strcpy(musicbox_password, json["musicbox_password"]);
           strcpy(musicbox_playlist_1, json["musicbox_playlist_1"]);
@@ -552,7 +563,7 @@ void loadConfig()
           // Firmware Version
           firmware_version = json["firmware_version"];
 
-          // Update the parameter values
+          // Update the config portal values to the stored values
           custom_musicbox_username.setValue(musicbox_username, MAX_USERNAME_LEN);
           custom_musicbox_password.setValue(musicbox_password, MAX_PASSWORD_LEN);
           custom_musicbox_playlist_1.setValue(musicbox_playlist_1, MAX_PLAYLIST_LEN);
@@ -599,10 +610,10 @@ void saveConfig()
     }
 
 #if defined(ARDUINOJSON_VERSION_MAJOR) && ARDUINOJSON_VERSION_MAJOR >= 6
-    serializeJson(json, Serial);
+    // serializeJson(json, Serial);
     serializeJson(json, configFile);
 #else
-    json.printTo(Serial);
+    // json.printTo(Serial);
     json.printTo(configFile);
 #endif
     configFile.close();
@@ -612,28 +623,35 @@ void saveConfig()
 
 // Setup callback functions, custom parameters, and timeouts
 // Called whenever a wifiManager is started, usually (twice, one on boot one on user defined config mode)
-void initializeConfigPortal(WiFiManager *wifiManager)
+void initializeConfigPortal()
 {
-  wifiManager->setSaveConfigCallback(saveConfigCallback);
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+
+  // Set callback for when portal closes for any reason
+  wifiManager.setConfigClosedCallback(closedConfigPortal);
+
+
+  // Set non blocking (so we must call wm.process() in loop, always)
+  wifiManager.setConfigPortalBlocking(false);
   
   // Add parameters only if they don't already exist
-  if (wifiManager->getParametersCount() < 1)
+  if (wifiManager.getParametersCount() < 1)
   {
-    wifiManager->addParameter(&custom_musicbox_username);
-    wifiManager->addParameter(&custom_musicbox_password);
-    wifiManager->addParameter(&custom_musicbox_playlist_1);
-    wifiManager->addParameter(&custom_musicbox_playlist_2);
+    wifiManager.addParameter(&custom_musicbox_username);
+    wifiManager.addParameter(&custom_musicbox_password);
+    wifiManager.addParameter(&custom_musicbox_playlist_1);
+    wifiManager.addParameter(&custom_musicbox_playlist_2);
 
   }
 
 
   // Set callback to reset settings
-  //wifiManager->setConfigPortalTimeout(180); // Set timeout for configuration portal
-  wifiManager->setAPCallback(configModeCallback);
-  wifiManager->setConnectTimeout(10);
+  //wifiManager.setConfigPortalTimeout(180); // Set timeout for configuration portal
+  wifiManager.setAPCallback(configModeCallback);
+  wifiManager.setConnectTimeout(10);
 }
 
-void closedConfigPortal(WiFiManager *wifiManager)
+void closedConfigPortal()
 {
   //read updated parameters
   strcpy(musicbox_username, custom_musicbox_username.getValue());
@@ -726,13 +744,9 @@ void closedConfigPortal(WiFiManager *wifiManager)
       // Incase we changed other data
       saveConfig();
 
-      lights(2);
+      displayError(true);
 
-      initializeConfigPortal(wifiManager);
-
-      wifiManager->startConfigPortal("MusicBox Setup");
-
-      closedConfigPortal(wifiManager); // The portal closed. Call THIS function (its recursive)
+      // Callback will call this function again (recurse) when it closes, because there was a failure
 
     }
 
@@ -755,6 +769,16 @@ void closedConfigPortal(WiFiManager *wifiManager)
 
 }
 
+void startConfigPortal()
+{
+  if (!wifiManager.getConfigPortalActive())
+  {
+    Serial.println("Entering Config");
+    initializeConfigPortal();
+    wifiManager.startConfigPortal("MusicBox Setup");
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   lights(3);
@@ -768,39 +792,21 @@ void setup() {
   loadConfig(); // Load the custom data such as user login details, playlists, version, etc
 
 
-  // Create an instance of WiFiManager
-  WiFiManager wifiManager;
-  initializeConfigPortal(&wifiManager);
+  
+  initializeConfigPortal();
 
   // Connect to Wi-Fi or start an Access Point if no credentials are stored
-  if (!wifiManager.autoConnect("MusicBox Setup")) {
-
-    // I disabled the timeout for now, the below will not occur
-    // Because, if wifi fails, we should just wait until we enter new details. No need to restart!
-    Serial.println("Failed to connect and hit timeout");
-    // Save any parameters we may have entered, try again
-    closedConfigPortal(&wifiManager);
-
-    delay(1000);
-    ESP.restart();
-    //delay(3000);
+  // Synchronous call: Wait for this to finish
+  if (wifiManager.autoConnect("MusicBox Setup")) {
+    lights(1);
+    
+  }
+  else
+  {
+    // Failed to connect, config portal will open
   }
 
-  // Configuration done
-  closedConfigPortal(&wifiManager);
 
- 
-  
-
-  Serial.println("WiFi connected");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-
-
-  // Check if a playlist name is stored in EEPROM and create a playlist on Spotify
-  // if (String(EEPROM.readString(40)).length() > 0) {
-  //   createPlaylist(String(EEPROM.readString(40)), accessToken);
-  // }
 }
 
 bool pressed = false;
@@ -810,90 +816,85 @@ int debounce = 50;
 
 // Quick Press feature variables
 int quick_presses = 0; // Current number of presses in window
-int quickpress_tresh = 3; // How many times to press to execute event (restart)
 unsigned long quickpress_window = 1000; // Window of time to press x times within for event to trigger
 unsigned long quickpress_start = 0;
 
 
 void loop() {
-  // Button press
+  // Run wifimanager
+  wifiManager.process();
 
-  // Reset quick presses if time expired
-  if (quickpress_start > 0 && millis() - quickpress_start >= quickpress_window)
-  {
-    quick_presses = 0;
+
+  // Button presses
+
+  if (quickpress_start > 0 && millis() - quickpress_start >= quickpress_window) {
+    pressed = false;
+    if (quick_presses > 0) {
+      
+      // Check the number of quick presses when the window expires
+      if (quick_presses == 1) {
+        // Execute the function for a single quick press
+        Serial.println("1 press");
+
+        if(!wifiManager.getConfigPortalActive())
+        {
+          String trackURI = getCurrentPlayingTrackURI();
+          
+          if (trackURI != "") {
+            Serial.println("Track: "+trackURI);
+            addTrackToPlaylist(trackURI);
+          }
+        }
+
+      } else if (quick_presses == 2) {
+        Serial.println("2 presses");
+      } else if (quick_presses == 3) {
+        Serial.println("3 presses");
+        startConfigPortal();
+      }
+      // Reset quick press variables
+      quick_presses = 0;
+      quickpress_start = 0;
+    }
   }
+
 
   // Execute once when it starts being pressed
-  if (digitalRead(buttonPin) == HIGH)
-  {
+  if (digitalRead(buttonPin) == HIGH) {
     // When it is first pressed, start timer
-    if (!pressed)
-    {
+    if (!pressed) {
       pressed = true;
       press_begin = millis();
-
-      
     }
     // During the duration of the press, check if it is held to enter config mode
-    else
-    {
-      if (millis() - press_begin >= configModeDuration)
-      {
-        Serial.println("Entering Debug");
-        WiFiManager wifiManager;
-
-        initializeConfigPortal(&wifiManager);
-
-        wifiManager.startConfigPortal("MusicBox Setup");
-
-        closedConfigPortal(&wifiManager); // The portal closed
-
+    else {
+      if (millis() - press_begin >= configModeDuration) {
+        Serial.println("Restarting manually!");
+        ESP.restart();
       }
-
     }
-
   }
-  // Set pressed to false when button is released (and pressed is true)
-  else if (digitalRead(buttonPin) == LOW && pressed)
-  {
+  // Set pressed to false when the button is released (and pressed is true)
+  else if (digitalRead(buttonPin) == LOW && pressed) {
     pressed = false;
     press_end = millis();
 
     int press_duration = press_end - press_begin;
 
-    // After releasing, if it was a short press, call api
-    if (press_duration < configModeDuration && press_duration > debounce)
-    {
-      Serial.println("Short press");
-      
+    // After releasing, if it was a short press, call the appropriate function
+    if (press_duration < configModeDuration && press_duration > debounce) {
+      //Serial.println("Short press");
 
-      // Increiment short presses for restart
+      // Increment short presses for restart
       quick_presses++;
+      // Serial.println(quick_presses);
+
       // Check if it is the first press, if so start another timer for the quick press feature
-      if (quick_presses == 1)
-      {
+      if (quick_presses == 1) {
         quickpress_start = millis(); // Store the time of the first short press.
       }
-      else if (quick_presses >= quickpress_tresh)
-      {
-        // Reached threshold, execute quickpress event
-        // Restart
-        quickpress_start = 0;
-        quick_presses = 0;
-
-        ESP.restart();
-      }
-
-      String trackURI = getCurrentPlayingTrackURI();
-      Serial.println("Track: "+trackURI);
-      if (trackURI != "") {
-        addTrackToPlaylist(trackURI);
-      }
     }
-  // END BUTTON LOGIC
   }
-
 
   
   

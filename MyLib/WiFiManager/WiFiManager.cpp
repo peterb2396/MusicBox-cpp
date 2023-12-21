@@ -1051,6 +1051,15 @@ bool WiFiManager::shutdownConfigPortal(){
   DEBUG_WM(DEBUG_VERBOSE,F("wifi mode:"),getModeString(WiFi.getMode()));
   #endif
   configPortalActive = false;
+
+  // Closed portal callback
+  if ( _configclosedcallback != NULL) {
+    #ifdef WM_DEBUG_LEVEL
+    DEBUG_WM(DEBUG_VERBOSE,F("[CB] _configclosedcallback calling"));
+    #endif
+    _configclosedcallback(); // @CALLBACK
+  }
+
   DEBUG_WM(DEBUG_VERBOSE,F("configportal closed"));
   _end();
   return ret;
@@ -2836,6 +2845,14 @@ void WiFiManager::setAPCallback( std::function<void(WiFiManager*)> func ) {
  */
 void WiFiManager::setWebServerCallback( std::function<void()> func ) {
   _webservercallback = func;
+}
+
+/**
+ * setConfigClosedCallback, set callback for when config portal closes for ANY reason.
+ * Peter made this!
+*/
+void WiFiManager::setConfigClosedCallback( std::function<void()> func ) {
+  _configclosedcallback = func;
 }
 
 /**

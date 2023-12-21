@@ -291,6 +291,9 @@ class WiFiManager
 
     // SET CALLBACKS
 
+    //called after config portal closes
+    void          setConfigClosedCallback(  std::function<void()> func );
+
     //called after AP mode and config portal has started
     void          setAPCallback( std::function<void(WiFiManager*)> func );
 
@@ -817,6 +820,7 @@ class WiFiManager
     // @todo use cb list (vector) maybe event ids, allow no return value
     std::function<void(WiFiManager*)> _apcallback;
     std::function<void()> _webservercallback;
+    std::function<void()> _configclosedcallback;
     std::function<void()> _savewificallback;
     std::function<void()> _presavewificallback;
     std::function<void()> _presaveparamscallback;

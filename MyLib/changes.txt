@@ -1,16 +1,4 @@
-Redirect root to configuration page
+Redirected root to configuration page
+Added configClosedCallback (WiFiManager.cpp, WiFiManager.h)
 
-TODO:
-BuiltByPeter endpoints:
-- Link page to login and authorize
-- Database modifications for the above
-- Finish ESP side retrieval and request
-
-- UploadFirmware endpoint, like upload resume
-- Look into security for uploads
-- Separate it from my user account if needed. Can just add a password box.
-
-Should be able to test firmware updates, authorization and all
-
-** Need to change createPlaylist to createOrFindPlaylist()
-** brush up and test all api calls
+TODO: fix refresh wifi link, delete spotify callback stuff
