@@ -32,14 +32,19 @@ const char * bbp_auth_url = "http://52.86.18.252:3001/authorize_musicbox";
 // Custom Parameter Values (overwritten when loadConfig)
 char musicbox_username[MAX_USERNAME_LEN];
 char musicbox_password[MAX_PASSWORD_LEN];
-char musicbox_playlist_1[MAX_PLAYLIST_LEN] = "MusicBox 1";
-char musicbox_playlist_2[MAX_PLAYLIST_LEN] = "MusicBox 2";
+char musicbox_playlist_A1[MAX_PLAYLIST_LEN] = "MusicBox A1";
+char musicbox_playlist_A2[MAX_PLAYLIST_LEN] = "MusicBox A2";
+char musicbox_playlist_B1[MAX_PLAYLIST_LEN] = "MusicBox B1";
+char musicbox_playlist_B2[MAX_PLAYLIST_LEN] = "MusicBox B2";
+
 
 // Custom Parameters
-WiFiManagerParameter custom_musicbox_username("username", "MusicBox Username", musicbox_username, MAX_USERNAME_LEN);
-WiFiManagerParameter custom_musicbox_password("password", "MusicBox Password", musicbox_password, MAX_PASSWORD_LEN);
-WiFiManagerParameter custom_musicbox_playlist_1("playlist1", "Playlist 1", musicbox_playlist_1, MAX_PLAYLIST_LEN);
-WiFiManagerParameter custom_musicbox_playlist_2("playlist2", "Playlist 2", musicbox_playlist_2, MAX_PLAYLIST_LEN);
+WiFiManagerParameter custom_musicbox_username("username", "", musicbox_username, MAX_USERNAME_LEN);
+WiFiManagerParameter custom_musicbox_password("password", "", musicbox_password, MAX_PASSWORD_LEN);
+WiFiManagerParameter custom_musicbox_playlist_A1("playlistA1", "Playlist A1", musicbox_playlist_A1, MAX_PLAYLIST_LEN);
+WiFiManagerParameter custom_musicbox_playlist_A2("playlistA2", "Playlist A2", musicbox_playlist_A2, MAX_PLAYLIST_LEN);
+WiFiManagerParameter custom_musicbox_playlist_B1("playlistB1", "Playlist B1", musicbox_playlist_B1, MAX_PLAYLIST_LEN);
+WiFiManagerParameter custom_musicbox_playlist_B2("playlistB2", "Playlist B2", musicbox_playlist_B2, MAX_PLAYLIST_LEN);
 
 
 
@@ -53,6 +58,8 @@ const int playlistPin = 35; // GPIO for playlist toggle
 int mode = 1;
 
 void checkForUpdates() {
+
+  
   HTTPClient http;
   http.begin("http://52.7.199.236:3000/version");
 
@@ -63,11 +70,12 @@ void checkForUpdates() {
     int latestVersion = version_str.toInt();
 
     if (latestVersion > firmware_version) {
-      Serial.println("Update available!");
+      Serial.println("Update available! Updates are disabled...");
       // Store the version number so we can save it if success
       temp_version = latestVersion;
       // Retrieve the download link and update the firmware
-      updateFirmware();
+      
+      // updateFirmware();
     } else {
       Serial.println("Firmware is up to date.");
     }
@@ -202,12 +210,23 @@ String clientID = "fffd853196474a44bb86a4d17717faab";
 String clientSecret = "606bd9a5cbdc46afbd7841996e3feaef"; 
 
 
-String getSelectedPlaylist() {
+String getSelectedPlaylist(bool single) {
 
   // Choose playlist based on GPIO pin state
-  if (digitalRead(playlistPin) == HIGH)
-    return musicbox_playlist_1;
-    return musicbox_playlist_2;
+  // voltage on 35 means B
+
+  // If single press
+  if (single)
+  {
+    if (digitalRead(playlistPin) == LOW)
+      return musicbox_playlist_A1; // A is selected
+      return musicbox_playlist_B1; // B is selected
+  }
+
+  // Double press
+  if (digitalRead(playlistPin) == LOW)
+      return musicbox_playlist_A2; // A is selected
+      return musicbox_playlist_B2; // B is selected
 
 }
 
@@ -338,9 +357,9 @@ String extractPlaylistID(const String& response, int endIndex) {
 }
 
 // Function to add a track to a playlist on Spotify
-void addTrackToPlaylist(String trackURI) {
+void addTrackToPlaylist(String trackURI, bool single) {
   HTTPClient http;
-  String playlistID = getOrCreatePlaylist(getSelectedPlaylist(), http);
+  String playlistID = getOrCreatePlaylist(getSelectedPlaylist(single), http);
 
   // Check if the song is in the playlist already
   if(isTrackInPlaylist(trackURI, playlistID))
@@ -518,7 +537,7 @@ String refreshAccessToken() {
 void loadConfig()
 {
   //clean FS, for testing
- //SPIFFS.format();
+  //SPIFFS.format();
 
   //read configuration from FS json
   Serial.println("mounting FS...");
@@ -553,8 +572,10 @@ void loadConfig()
           // Update the local values to the stored
           strcpy(musicbox_username, json["musicbox_username"]);
           strcpy(musicbox_password, json["musicbox_password"]);
-          strcpy(musicbox_playlist_1, json["musicbox_playlist_1"]);
-          strcpy(musicbox_playlist_2, json["musicbox_playlist_2"]);
+          strcpy(musicbox_playlist_A1, json["musicbox_playlist_A1"]);
+          strcpy(musicbox_playlist_A2, json["musicbox_playlist_A2"]);
+          strcpy(musicbox_playlist_B1, json["musicbox_playlist_B1"]);
+          strcpy(musicbox_playlist_B2, json["musicbox_playlist_B2"]);
 
           // Spotify tokens
           strcpy(access_token, json["access_token"]);
@@ -566,8 +587,10 @@ void loadConfig()
           // Update the config portal values to the stored values
           custom_musicbox_username.setValue(musicbox_username, MAX_USERNAME_LEN);
           custom_musicbox_password.setValue(musicbox_password, MAX_PASSWORD_LEN);
-          custom_musicbox_playlist_1.setValue(musicbox_playlist_1, MAX_PLAYLIST_LEN);
-          custom_musicbox_playlist_2.setValue(musicbox_playlist_2, MAX_PLAYLIST_LEN);
+          custom_musicbox_playlist_A1.setValue(musicbox_playlist_A1, MAX_PLAYLIST_LEN);
+          custom_musicbox_playlist_A2.setValue(musicbox_playlist_A2, MAX_PLAYLIST_LEN);
+          custom_musicbox_playlist_B1.setValue(musicbox_playlist_B1, MAX_PLAYLIST_LEN);
+          custom_musicbox_playlist_B2.setValue(musicbox_playlist_B2, MAX_PLAYLIST_LEN);
 
         } else {
           Serial.println("failed to load json config");
@@ -582,6 +605,7 @@ void loadConfig()
 
 }
 
+
 void saveConfig()
 {
   Serial.println("saving config");
@@ -594,12 +618,23 @@ void saveConfig()
     // Save local params to disk
     json["musicbox_username"] = musicbox_username;
     json["musicbox_password"] = musicbox_password;
-    json["musicbox_playlist_1"] = musicbox_playlist_1;
-    json["musicbox_playlist_2"] = musicbox_playlist_2;
+    json["musicbox_playlist_A1"] = musicbox_playlist_A1;
+    json["musicbox_playlist_A2"] = musicbox_playlist_A2;
+    json["musicbox_playlist_B1"] = musicbox_playlist_B1;
+    json["musicbox_playlist_B2"] = musicbox_playlist_B2;
 
     // Save spotify tokens (local values to disk)
-    json["access_token"] = access_token;
-    json["refresh_token"] = refresh_token;
+    if (strlen(musicbox_password) > 1)
+    {
+      json["access_token"] = access_token;
+      json["refresh_token"] = refresh_token;
+    }
+    else // If we logout, delete our token
+    {
+      json["access_token"] ="";
+      json["refresh_token"] = "";
+    }
+    
 
     // Store latest Firmware Version
     json["firmware_version"] = firmware_version;
@@ -639,8 +674,10 @@ void initializeConfigPortal()
   {
     wifiManager.addParameter(&custom_musicbox_username);
     wifiManager.addParameter(&custom_musicbox_password);
-    wifiManager.addParameter(&custom_musicbox_playlist_1);
-    wifiManager.addParameter(&custom_musicbox_playlist_2);
+    wifiManager.addParameter(&custom_musicbox_playlist_A1);
+    wifiManager.addParameter(&custom_musicbox_playlist_A2);
+    wifiManager.addParameter(&custom_musicbox_playlist_B1);
+    wifiManager.addParameter(&custom_musicbox_playlist_B2);
 
   }
 
@@ -651,33 +688,17 @@ void initializeConfigPortal()
   wifiManager.setConnectTimeout(10);
 }
 
-void closedConfigPortal()
+// Try to login with musicbox credentials
+void authenticate()
 {
-  //read updated parameters
-  strcpy(musicbox_username, custom_musicbox_username.getValue());
-  strcpy(musicbox_password, custom_musicbox_password.getValue());
-  strcpy(musicbox_playlist_1, custom_musicbox_playlist_1.getValue());
-  strcpy(musicbox_playlist_2, custom_musicbox_playlist_2.getValue());
+  bool fail = false;
 
-  Serial.println("The values in the file are: ");
-  Serial.println("\tmusicbox_username : " + String(musicbox_username));
-  Serial.println("\tmusicbox_password : " + String(musicbox_password));
-  Serial.println("\tmusicbox_playlist_1 : " + String(musicbox_playlist_1));
-  Serial.println("\tmusicbox_playlist_2 : " + String(musicbox_playlist_2));
-
-  // Check for new firmware
-  httpUpdate.onStart(update_started);
-  httpUpdate.onEnd(update_finished);
-  httpUpdate.onProgress(update_progress);
-  httpUpdate.onError(update_error);
-
-  checkForUpdates(); // Checks for updates
-
-  // Set the spotify tokens if we dont have them
-  if (strlen(refresh_token) < 2)
+  // If we do not have an access token, (or if we logged out) reauthenticate
+  if (strlen(access_token) < 2 || strlen(musicbox_username) + strlen(musicbox_password) < 2)
   {
     // Need to get the tokens from my server
-    bool fail = true;
+    fail = true;
+    
     // Did we provide login info to BuiltByPeter
     if (strlen(musicbox_username) + strlen(musicbox_password) > 2)
     {
@@ -704,6 +725,8 @@ void closedConfigPortal()
           res = "";  
           fail = false;
 
+          // Save the new token
+          saveConfig();
           
         } else {
           Serial.print("Failed to authorize with BBP account: ");
@@ -736,29 +759,44 @@ void closedConfigPortal()
 
     }
 
-    if (fail)
-    {
-      Serial.println("MusicBox account auth failure");
-      
-      
-      // Incase we changed other data
-      saveConfig();
-
-      displayError(true);
-
-      // Callback will call this function again (recurse) when it closes, because there was a failure
-
-    }
-
-
+    
+  }
+  else
+  {
+    // We already had our access token!
+    
   }
 
-  // Here we're good! Saves all data, including access and refresh tokens.
-  saveConfig(); // Will also store new version, if we updated
-
-  // Connected to wifi! Will this detect its own network???
-  if (WiFi.status() == WL_CONNECTED) {
+  if (fail)
+  {
+    Serial.println("MusicBox account auth failure");
+    displayError(true);
+  }
+  else
+  {
+    // Success
+    Serial.println("Ready!");
     lights(1);
+
+  }
+}
+
+void closedConfigPortal()
+{
+  //read updated parameters
+  strcpy(musicbox_username, custom_musicbox_username.getValue());
+  strcpy(musicbox_password, custom_musicbox_password.getValue());
+  strcpy(musicbox_playlist_A1, custom_musicbox_playlist_A1.getValue());
+  strcpy(musicbox_playlist_A2, custom_musicbox_playlist_A2.getValue());
+  strcpy(musicbox_playlist_B1, custom_musicbox_playlist_B1.getValue());
+  strcpy(musicbox_playlist_B2, custom_musicbox_playlist_B2.getValue());
+
+  saveConfig(); // Will also store new version, if we updated
+  
+
+  // Connected to wifi!
+  if (WiFi.status() == WL_CONNECTED) {
+    authenticate();
   }
   else //We aren't connected to wifi, reboot (we probably just changed wifi credentials)
   {
@@ -791,14 +829,23 @@ void setup() {
 
   loadConfig(); // Load the custom data such as user login details, playlists, version, etc
 
-
   
   initializeConfigPortal();
 
   // Connect to Wi-Fi or start an Access Point if no credentials are stored
   // Synchronous call: Wait for this to finish
   if (wifiManager.autoConnect("MusicBox Setup")) {
-    lights(1);
+    
+    // Check for new firmware
+    httpUpdate.onStart(update_started);
+    httpUpdate.onEnd(update_finished);
+    httpUpdate.onProgress(update_progress);
+    httpUpdate.onError(update_error);
+
+    checkForUpdates(); // Checks for updates
+
+    // Ensure we are authed with spotify
+    authenticate();
     
   }
   else
@@ -809,6 +856,7 @@ void setup() {
 
 }
 
+// Button variables
 bool pressed = false;
 unsigned long press_begin = 0;
 unsigned long press_end = 0;
@@ -832,22 +880,19 @@ void loop() {
     if (quick_presses > 0) {
       
       // Check the number of quick presses when the window expires
-      if (quick_presses == 1) {
-        // Execute the function for a single quick press
-        Serial.println("1 press");
+      if (quick_presses < 3) { // Single or double press
 
+        // Only love songs if not in config portal
         if(!wifiManager.getConfigPortalActive())
         {
           String trackURI = getCurrentPlayingTrackURI();
           
           if (trackURI != "") {
             Serial.println("Track: "+trackURI);
-            addTrackToPlaylist(trackURI);
+            addTrackToPlaylist(trackURI, (quick_presses == 1));
           }
         }
 
-      } else if (quick_presses == 2) {
-        Serial.println("2 presses");
       } else if (quick_presses == 3) {
         Serial.println("3 presses");
         startConfigPortal();
