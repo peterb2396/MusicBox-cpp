@@ -1,4 +1,2 @@
-Redirected root to configuration page
+Redirected root to configuration page. Copied route code to be the same as R_wifi
 Added configClosedCallback (WiFiManager.cpp, WiFiManager.h)
-
-TODO: fix refresh wifi link, delete spotify callback stuff

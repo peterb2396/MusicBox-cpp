@@ -641,9 +641,9 @@ void WiFiManager::setupHTTPServer(){
 
   // G macro workaround for Uri() bug https://github.com/esp8266/Arduino/issues/7102
   
-  // I changed the root to redirect to wifi. Just need to add exit button
-  //server->on(WM_G(R_root),       std::bind(&WiFiManager::handleRoot, this));
+  // I changed the root to redirect to wifi. Exact same route as R_wifi
   server->on(WM_G(R_root),       std::bind(&WiFiManager::handleWifi, this, true));
+  server->on(WM_G(R_wifi),       std::bind(&WiFiManager::handleWifi, this, true));
   server->on(WM_G(R_wifinoscan), std::bind(&WiFiManager::handleWifi, this, false));
   server->on(WM_G(R_wifisave),   std::bind(&WiFiManager::handleWifiSave, this));
   server->on(WM_G(R_info),       std::bind(&WiFiManager::handleInfo, this));
@@ -654,9 +654,6 @@ void WiFiManager::setupHTTPServer(){
   server->on(WM_G(R_close),      std::bind(&WiFiManager::handleClose, this));
   server->on(WM_G(R_erase),      std::bind(&WiFiManager::handleErase, this, false));
   server->on(WM_G(R_status),     std::bind(&WiFiManager::handleWiFiStatus, this));
-  
-  server->on(WM_G(R_login), std::bind(&WiFiManager::handleSpotifyAuth, this));
-  server->on(WM_G(R_callback), std::bind(&WiFiManager::handleSpotifyCallback, this));
   
   server->onNotFound (std::bind(&WiFiManager::handleNotFound, this));
   
@@ -670,44 +667,6 @@ void WiFiManager::setupHTTPServer(){
   #endif
 }
 
-
-// *****************************************************
-
-const char* spotifyClientId = "fffd853196474a44bb86a4d17717faab";
-const char* spotifyClientSecret = "606bd9a5cbdc46afbd7841996e3feaef";
-const char* spotifyRedirectUri = "http://192.168.4.1/callback";
-
-// Function to handle the Spotify authentication button click
-void WiFiManager::handleSpotifyAuth() {
-  String spotifyAuthUrl = "https://accounts.spotify.com/authorize?";
-  spotifyAuthUrl += "client_id=" + String(spotifyClientId);
-  spotifyAuthUrl += "&response_type=code";
-  spotifyAuthUrl += "&redirect_uri=" + String(spotifyRedirectUri);
-  spotifyAuthUrl += "&scope=user-read-private%20user-read-email"; // Add necessary scopes
-
-  // Set headers for CORS (Cross-Origin Resource Sharing)
-  server->sendHeader("Access-Control-Allow-Origin", "*");
-  server->sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  server->sendHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  // Redirect to the Spotify authentication page
-  server->sendHeader("Location", spotifyAuthUrl, true);
-  server->send(302, "text/plain", "");  // Send the redirect response
-}
-
-// Function to handle the Spotify callback and store the authentication code
-void WiFiManager::handleSpotifyCallback() {
-    DEBUG_WM(F("CALLBACK"));
-  // Check if the callback parameter "code" is present
-  if (server->hasArg("code")) {
-    //spotifyAuthCode = server->arg("code");
-    server->send(200, "text/plain", "Authentication code received. You can now close this page.");
-  } else {
-    server->send(400, "text/plain", "Error: Authentication code not found.");
-  }
-}
-
-// *****************************************************
 void WiFiManager::setupDNSD(){
   dnsServer.reset(new DNSServer());
 

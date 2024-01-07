@@ -12,6 +12,13 @@
 #include <HTTPUpdate.h> // Firmware updates
 
 #include <WiFi.h>
+
+// Set true for first time boot to format FS.
+// These must both be false when compiling and uploading binaries to
+const bool firstSetup = false;
+const bool skipUpdates = true;
+
+
 const int MAX_USERNAME_LEN = 32;
 const int MAX_PASSWORD_LEN = 48;
 const int MAX_PLAYLIST_LEN = 48;
@@ -26,8 +33,8 @@ char refresh_token[132];
 int firmware_version = -1;
 int temp_version = -1;
 
-// Built By Peter login api
-const char * bbp_auth_url = "http://52.86.18.252:3001/authorize_musicbox";
+// MusicBox login api
+const char * musicbox_auth_url = "http://52.86.18.252:3001/authorize_musicbox";
 
 // Custom Parameter Values (overwritten when loadConfig)
 char musicbox_username[MAX_USERNAME_LEN];
@@ -39,8 +46,8 @@ char musicbox_playlist_B2[MAX_PLAYLIST_LEN] = "MusicBox B2";
 
 
 // Custom Parameters
-WiFiManagerParameter custom_musicbox_username("username", "", musicbox_username, MAX_USERNAME_LEN);
-WiFiManagerParameter custom_musicbox_password("password", "", musicbox_password, MAX_PASSWORD_LEN);
+WiFiManagerParameter custom_musicbox_username("username", "MusicBox Username", musicbox_username, MAX_USERNAME_LEN);
+WiFiManagerParameter custom_musicbox_password("password", "MusicBox Password", musicbox_password, MAX_PASSWORD_LEN);
 WiFiManagerParameter custom_musicbox_playlist_A1("playlistA1", "Playlist A1", musicbox_playlist_A1, MAX_PLAYLIST_LEN);
 WiFiManagerParameter custom_musicbox_playlist_A2("playlistA2", "Playlist A2", musicbox_playlist_A2, MAX_PLAYLIST_LEN);
 WiFiManagerParameter custom_musicbox_playlist_B1("playlistB1", "Playlist B1", musicbox_playlist_B1, MAX_PLAYLIST_LEN);
@@ -48,12 +55,18 @@ WiFiManagerParameter custom_musicbox_playlist_B2("playlistB2", "Playlist B2", mu
 
 
 
-// IO Setup
+// Standard IO Setup
 const int buttonPin = 34; // GPIO pin where the button is connected
-const int redPin = 27;    // GPIO pin for the red LED
-const int greenPin = 32; // GPIO pin for the green LED
-const int bluePin = 4;  // GPIO pin for the blue LED
 const int playlistPin = 35; // GPIO for playlist toggle
+// const int redPin = 27;    // GPIO pin for the red LED
+// const int greenPin = 32; // GPIO pin for the green LED
+// const int bluePin = 4;  // GPIO pin for the blue LED
+
+// Reversed IO Setup
+const int redPin = 4;    // GPIO pin for the red LED
+const int greenPin = 32; // GPIO pin for the green LED
+const int bluePin = 27;  // GPIO pin for the blue LED
+
 
 int mode = 1;
 
@@ -70,12 +83,28 @@ void checkForUpdates() {
     int latestVersion = version_str.toInt();
 
     if (latestVersion > firmware_version) {
-      Serial.println("Update available! Updates are disabled...");
+      Serial.print("Update available! Version: ");
+      Serial.println(latestVersion);
       // Store the version number so we can save it if success
-      temp_version = latestVersion;
-      // Retrieve the download link and update the firmware
+      if (skipUpdates)
+      {
+        Serial.println("Skipping this update!");
+
+        // Store the latest version so that we do not install this version ever,
+        // even when turning off update skips. Do we need to do this?
+
+        //firmware_version = temp_version;
+      }
+      else
+      {
+        temp_version = latestVersion;
+        // Retrieve the download link and update the firmware
+        
+        updateFirmware();
+
+      }
       
-      // updateFirmware();
+
     } else {
       Serial.println("Firmware is up to date.");
     }
@@ -138,6 +167,7 @@ void update_error(int err) {
 // Mode 1 is ready (green)
 // Mode 2 is error (red)
 // Mode 3 is booting (purple)
+// Mode 5 is success (flash green)
 void lights(int mode_in) {
   mode = mode_in;
   
@@ -174,6 +204,15 @@ void lights(int mode_in) {
     digitalWrite(redPin, HIGH);
     digitalWrite(greenPin, LOW);
     digitalWrite(bluePin, LOW);
+  }
+  else if (mode == 5) {
+    lights(-1);
+    delay(100);
+    lights(1);
+    delay(100);
+    lights(-1);
+    delay(100);
+    lights(1);
   }
   else if (mode == -1) // Off
   {
@@ -214,6 +253,10 @@ String getSelectedPlaylist(bool single) {
 
   // Choose playlist based on GPIO pin state
   // voltage on 35 means B
+  if (digitalRead(playlistPin) == LOW)
+    Serial.println("A is selected");
+  else
+    Serial.println("B is selected");
 
   // If single press
   if (single)
@@ -382,6 +425,7 @@ void addTrackToPlaylist(String trackURI, bool single) {
   if (httpResponseCode > 0) {
     if (httpResponseCode == HTTP_CODE_CREATED) {
       Serial.println("Track added to the playlist successfully!");
+      //lights(5);
     } else {
       Serial.print("Failed to add track to the playlist. Error code: ");
       Serial.println(httpResponseCode);
@@ -536,8 +580,9 @@ String refreshAccessToken() {
 
 void loadConfig()
 {
-  //clean FS, for testing
-  //SPIFFS.format();
+  // format FS on first setup
+  if (firstSetup)
+    SPIFFS.format();
 
   //read configuration from FS json
   Serial.println("mounting FS...");
@@ -685,7 +730,7 @@ void initializeConfigPortal()
   // Set callback to reset settings
   //wifiManager.setConfigPortalTimeout(180); // Set timeout for configuration portal
   wifiManager.setAPCallback(configModeCallback);
-  wifiManager.setConnectTimeout(10);
+  wifiManager.setConnectTimeout(5);
 }
 
 // Try to login with musicbox credentials
@@ -694,13 +739,13 @@ void authenticate()
   bool fail = false;
 
   // If we do not have an access token, (or if we logged out) reauthenticate
-  if (strlen(access_token) < 2 || strlen(musicbox_username) + strlen(musicbox_password) < 2)
+  if (strlen(access_token) == 0 || ((strlen(musicbox_username) * strlen(musicbox_password)) == 0))
   {
     // Need to get the tokens from my server
     fail = true;
     
-    // Did we provide login info to BuiltByPeter
-    if (strlen(musicbox_username) + strlen(musicbox_password) > 2)
+    // Did we provide login info to MusicBox
+    if ((strlen(musicbox_username) * strlen(musicbox_password)) > 0)
     {
       // Request tokens from my server
       HTTPClient http;
@@ -709,7 +754,7 @@ void authenticate()
       String jsonPayload = "{\"username\":\"" + String(musicbox_username) + "\",\"pass\":\"" + String(musicbox_password) + "\"}";
 
 
-      http.begin(bbp_auth_url);
+      http.begin(musicbox_auth_url);
       http.addHeader("Content-Type", "application/json");
 
       int httpResponseCode = http.POST(jsonPayload);
@@ -729,7 +774,7 @@ void authenticate()
           saveConfig();
           
         } else {
-          Serial.print("Failed to authorize with BBP account: ");
+          Serial.print("Failed to authorize with musicbox account: ");
           Serial.println(httpResponseCode);
           
           if (httpResponseCode == HTTP_CODE_UNAUTHORIZED)
@@ -749,7 +794,7 @@ void authenticate()
           
         }
       } else {
-        Serial.print("Error trying to auth with BuiltByPeter: ");
+        Serial.print("Error trying to auth with MusicBox server: ");
         Serial.print(http.errorToString(httpResponseCode).c_str());
         Serial.println(httpResponseCode);
       }
@@ -822,6 +867,7 @@ void setup() {
   lights(3);
 
   pinMode(buttonPin, INPUT);
+  pinMode(playlistPin, INPUT);
 
   pinMode(redPin, OUTPUT);
   pinMode(greenPin, OUTPUT);
