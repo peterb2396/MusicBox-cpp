@@ -13,10 +13,11 @@
 
 #include <WiFi.h>
 
-// Set true for first time boot to format FS.
-// These must both be false when compiling and uploading binaries to
-const bool firstSetup = false;
-const bool skipUpdates = true;
+
+// Set true while developing to prevent updating while testing new code
+// But it would only update if I upload code myself during development, which I wouldnt do.
+// So this is probably unneeded, but available.
+const bool skipUpdates = false;
 
 
 const int MAX_USERNAME_LEN = 32;
@@ -25,7 +26,6 @@ const int MAX_PLAYLIST_LEN = 48;
 
 // Create an instance of WiFiManager
 WiFiManager wifiManager;
-bool configOpen = false;
 
 // Authorization tokens (fetched once wifi connects)
 char access_token[256];
@@ -58,14 +58,14 @@ WiFiManagerParameter custom_musicbox_playlist_B2("playlistB2", "Playlist B2", mu
 // Standard IO Setup
 const int buttonPin = 34; // GPIO pin where the button is connected
 const int playlistPin = 35; // GPIO for playlist toggle
-// const int redPin = 27;    // GPIO pin for the red LED
-// const int greenPin = 32; // GPIO pin for the green LED
-// const int bluePin = 4;  // GPIO pin for the blue LED
+const int redPin = 27;    // GPIO pin for the red LED
+const int greenPin = 32; // GPIO pin for the green LED
+const int bluePin = 4;  // GPIO pin for the blue LED
 
 // Reversed IO Setup
-const int redPin = 4;    // GPIO pin for the red LED
-const int greenPin = 32; // GPIO pin for the green LED
-const int bluePin = 27;  // GPIO pin for the blue LED
+// const int redPin = 4;    // GPIO pin for the red LED
+// const int greenPin = 32; // GPIO pin for the green LED
+// const int bluePin = 27;  // GPIO pin for the blue LED
 
 
 int mode = 1;
@@ -580,14 +580,16 @@ String refreshAccessToken() {
 
 void loadConfig()
 {
-  // format FS on first setup
-  if (firstSetup)
-    SPIFFS.format();
+  // Format on fail, should setup the file system.
+  if (SPIFFS.begin(true)) {
 
-  //read configuration from FS json
-  Serial.println("mounting FS...");
+    // Check if we should format: We shouldnt need this, if the crashes were due to an unformatted FS.
+    // I am disabling it for now. If I experience crashes when flashing a new device with software, uncomment.
+    // If both fails, must make a variable shouldFormat and format before even doing SPIFFS.begin. TBD.
+    // if (!SPIFFS.exists("/config.json")) {
+    //   SPIFFS.format();
+    // }
 
-  if (SPIFFS.begin()) {
     //Serial.println("mounted file system");
     if (SPIFFS.exists("/config.json")) {
       //file exists, reading and loading
@@ -737,6 +739,7 @@ void initializeConfigPortal()
 void authenticate()
 {
   bool fail = false;
+  
 
   // If we do not have an access token, (or if we logged out) reauthenticate
   if (strlen(access_token) == 0 || ((strlen(musicbox_username) * strlen(musicbox_password)) == 0))
@@ -803,6 +806,18 @@ void authenticate()
       jsonPayload = "";
 
     }
+    else
+    {
+      // We did not provide login info.
+      // If there is an access token, delete it
+      if (strlen(access_token) > 0 || strlen(refresh_token) > 0)
+      {
+        strcpy(refresh_token, "");
+        strcpy(access_token, ""); 
+      }
+      // Erases the sensitive data from storage
+      saveConfig();
+    }
 
     
   }
@@ -847,7 +862,6 @@ void closedConfigPortal()
   {
     delay(1000);
     ESP.restart();
-    //delay(1000);
   }
 
 }
