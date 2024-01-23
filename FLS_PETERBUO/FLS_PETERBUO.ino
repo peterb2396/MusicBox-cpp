@@ -19,6 +19,9 @@
 // So this is probably unneeded, but available.
 const bool skipUpdates = false;
 
+// Force FS to format
+const bool forceFormat = false;
+
 
 const int MAX_USERNAME_LEN = 32;
 const int MAX_PASSWORD_LEN = 48;
@@ -34,7 +37,7 @@ int firmware_version = -1;
 int temp_version = -1;
 
 // MusicBox login api
-const char * musicbox_auth_url = "http://52.86.18.252:3001/authorize_musicbox";
+const char * musicbox_auth_url = "http://52.86.18.252:3000/authorize_musicbox";
 
 // Custom Parameter Values (overwritten when loadConfig)
 char musicbox_username[MAX_USERNAME_LEN];
@@ -68,7 +71,7 @@ const int redPin = 27;    // GPIO pin for the red LED
 const int greenPin = 32; // GPIO pin for the green LED
 const int bluePin = 4;  // GPIO pin for the blue LED
 
-// Reversed IO Setup
+//Reversed IO Setup
 // const int redPin = 4;    // GPIO pin for the red LED
 // const int greenPin = 32; // GPIO pin for the green LED
 // const int bluePin = 27;  // GPIO pin for the blue LED
@@ -89,7 +92,7 @@ void checkForUpdates() {
 
   
   HTTPClient http;
-  http.begin("http://52.7.199.236:3000/version");
+  http.begin("http://52.7.199.236:3001/version");
 
   int httpCode = http.GET();
   if (httpCode == HTTP_CODE_OK) {
@@ -171,11 +174,16 @@ void update_finished() {
 
 void update_progress(int cur, int total) {
   Serial.printf("CALLBACK:  HTTP update process at %d of %d bytes...\n", cur, total);
-  // Toggle led 
-  if (digitalRead(redPin) == HIGH) // Purple
-    lights(-1);
-  else
-    lights(3);
+
+  if (cur % 10 == 8) // If it ends in eight, toggle
+  {
+    // Toggle led 
+    if (digitalRead(redPin) == HIGH) // Purple
+      lights(-1);
+    else
+      lights(3);
+  }
+  
 }
 
 void update_error(int err) {
@@ -626,6 +634,10 @@ void loadConfig()
     // if (!SPIFFS.exists("/config.json")) {
     //   SPIFFS.format();
     // }
+    if (forceFormat)
+    {
+      SPIFFS.format();
+    }
 
     //Serial.println("mounted file system");
     if (SPIFFS.exists("/config.json")) {
@@ -1012,8 +1024,8 @@ void loop() {
           }
         }
 
-      } else if (quick_presses == 3) {
-        Serial.println("3 presses");
+      } else { // More than 3 presses means config mode (spam)
+        Serial.println("> 3 presses, enter config");
         startConfigPortal();
       }
       // Reset quick press variables
