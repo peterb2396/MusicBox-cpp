@@ -19,9 +19,6 @@
 // So this is probably unneeded, but available.
 const bool skipUpdates = false;
 
-// Force FS to format
-const bool forceFormat = false;
-
 
 const int MAX_USERNAME_LEN = 32;
 const int MAX_PASSWORD_LEN = 48;
@@ -37,7 +34,7 @@ int firmware_version = -1;
 int temp_version = -1;
 
 // MusicBox login api
-const char * musicbox_auth_url = "http://52.86.18.252:3000/authorize_musicbox";
+const char * musicbox_auth_url = "http://52.7.199.236:3001/authorize_musicbox";
 
 // Custom Parameter Values (overwritten when loadConfig)
 char musicbox_username[MAX_USERNAME_LEN];
@@ -100,7 +97,7 @@ void checkForUpdates() {
     String version_str = http.getString();
     int latestVersion = version_str.toInt();
 
-    if (latestVersion > firmware_version) {
+    if (latestVersion != firmware_version) {
       Serial.print("Update available! Version: ");
       Serial.println(latestVersion);
       // Store the version number so we can save it if success
@@ -628,15 +625,26 @@ void loadConfig()
   // Format on fail, should setup the file system.
   if (SPIFFS.begin(true)) {
 
-    // Check if we should format: We shouldnt need this, if the crashes were due to an unformatted FS.
-    // I am disabling it for now. If I experience crashes when flashing a new device with software, uncomment.
-    // If both fails, must make a variable shouldFormat and format before even doing SPIFFS.begin. TBD.
-    // if (!SPIFFS.exists("/config.json")) {
-    //   SPIFFS.format();
-    // }
-    if (forceFormat)
-    {
-      SPIFFS.format();
+    // Format on first time
+    // Check if formatting is needed
+    if (!SPIFFS.exists("/formatted.txt")) {
+      if(SPIFFS.format())
+      {
+        File flagFile = SPIFFS.open("/formatted.txt", "w");
+        if (flagFile) {
+          flagFile.println("Formatted");
+          flagFile.close();
+        }
+
+        Serial.println("SPIFFS initialized and formatted successfully");
+
+      }
+      else
+      {
+        Serial.println("Failed to format SPIFFS");
+      }
+
+      
     }
 
     //Serial.println("mounted file system");
