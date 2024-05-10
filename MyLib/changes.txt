@@ -1,2 +1,6 @@
+Whenever I modify a library, I note my changes here and 
+copy the library to this folder.
+
+WiFiManager:
 Redirected root to configuration page. Copied route code to be the same as R_wifi
 Added configClosedCallback (WiFiManager.cpp, WiFiManager.h)
