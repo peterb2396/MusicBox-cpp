@@ -1,5 +1,6 @@
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
+#include <string>
 
 #ifdef ESP32
   #include <SPIFFS.h>
@@ -18,6 +19,7 @@
 // But it would only update if I upload code myself during development, which I wouldnt do.
 // So this is probably unneeded, but available.
 const bool skipUpdates = false;
+const bool force_format = false;
 
 
 const int MAX_USERNAME_LEN = 32;
@@ -34,41 +36,43 @@ int firmware_version = -1;
 int temp_version = -1;
 
 // MusicBox login api
-const char * musicbox_auth_url = "http://52.7.199.236:3001/authorize_musicbox";
+const char * musicbox_auth_url = "https://musicbox-backend-178z.onrender.com/authorize_musicbox";
 
 // Custom Parameter Values (overwritten when loadConfig)
 char musicbox_username[MAX_USERNAME_LEN];
 char musicbox_password[MAX_PASSWORD_LEN];
 
-char musicbox_playlist_A1[MAX_PLAYLIST_LEN] = "MusicBox A1";
-char musicbox_playlist_A2[MAX_PLAYLIST_LEN] = "MusicBox A2";
-char musicbox_playlist_A3[MAX_PLAYLIST_LEN] = "MusicBox A3";
+char musicbox_playlist_1[MAX_PLAYLIST_LEN] = "MusicBox 1";
+char musicbox_playlist_2[MAX_PLAYLIST_LEN] = "MusicBox 2";
+char musicbox_playlist_3[MAX_PLAYLIST_LEN] = "MusicBox 3";
 
-char musicbox_playlist_B1[MAX_PLAYLIST_LEN] = "MusicBox B1";
-char musicbox_playlist_B2[MAX_PLAYLIST_LEN] = "MusicBox B2";
-char musicbox_playlist_B3[MAX_PLAYLIST_LEN] = "MusicBox B3";
+char net_delay[3] = "0";
+
+char sleep_minutes[4] = "45";
 
 
 // Custom Parameters
 WiFiManagerParameter custom_musicbox_username("username", "MusicBox Username", musicbox_username, MAX_USERNAME_LEN);
 WiFiManagerParameter custom_musicbox_password("password", "MusicBox Password", musicbox_password, MAX_PASSWORD_LEN);
-WiFiManagerParameter custom_musicbox_playlist_A1("playlistA1", "Playlist A1", musicbox_playlist_A1, MAX_PLAYLIST_LEN);
-WiFiManagerParameter custom_musicbox_playlist_A2("playlistA2", "Playlist A2", musicbox_playlist_A2, MAX_PLAYLIST_LEN);
-WiFiManagerParameter custom_musicbox_playlist_A3("playlistA3", "Playlist A3", musicbox_playlist_A3, MAX_PLAYLIST_LEN);
 
-WiFiManagerParameter custom_musicbox_playlist_B1("playlistB1", "Playlist B1", musicbox_playlist_B1, MAX_PLAYLIST_LEN);
-WiFiManagerParameter custom_musicbox_playlist_B2("playlistB2", "Playlist B2", musicbox_playlist_B2, MAX_PLAYLIST_LEN);
-WiFiManagerParameter custom_musicbox_playlist_B3("playlistB3", "Playlist B3", musicbox_playlist_B3, MAX_PLAYLIST_LEN);
+WiFiManagerParameter custom_musicbox_playlist_1("playlist1", "Playlist 1", musicbox_playlist_1, MAX_PLAYLIST_LEN);
+WiFiManagerParameter custom_musicbox_playlist_2("playlist2", "Playlist 2", musicbox_playlist_2, MAX_PLAYLIST_LEN);
+WiFiManagerParameter custom_musicbox_playlist_3("playlist3", "Playlist 3", musicbox_playlist_3, MAX_PLAYLIST_LEN);
+
+WiFiManagerParameter custom_net_delay("netdelay", "Network Delay", net_delay, 3);
+WiFiManagerParameter custom_sleep_minutes("sleepminutes", "Minutes until Sleep", sleep_minutes, 4);
+
 
 
 // Standard IO Setup
 const int buttonPin = 34; // GPIO pin where the button is connected
-const int playlistPin = 35; // GPIO for playlist toggle
+//const int playlistPin = 35; // GPIO for playlist toggle: No longer using AB system
 const int redPin = 27;    // GPIO pin for the red LED
 const int greenPin = 32; // GPIO pin for the green LED
 const int bluePin = 4;  // GPIO pin for the blue LED
 
-//Reversed IO Setup
+//Reversed IO Setup (for my prototype)
+
 // const int redPin = 4;    // GPIO pin for the red LED
 // const int greenPin = 32; // GPIO pin for the green LED
 // const int bluePin = 27;  // GPIO pin for the blue LED
@@ -85,11 +89,40 @@ int quick_presses = 0; // Current number of presses in window
 unsigned long quickpress_window = 1000; // Window of time to press x times within for event to trigger
 unsigned long quickpress_start = 0;
 
-void checkForUpdates() {
+// Sleep feature variables
+unsigned long sleep_start = millis(); // Start of the sleep timer
+bool sleeping = false;
+int last_mode = 0;
 
+
+const char* getCertificate() {
+
+  HTTPClient http;
+  http.begin("https://musicbox-backend-178z.onrender.com/certificate");  // Replace with your server's domain
+  int httpCode = http.GET();
+  if (httpCode > 0) {
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      char* rootCACertificate = new char[payload.length() + 1];
+      strcpy(rootCACertificate, payload.c_str());
+      http.end();
+      return rootCACertificate;
+    }
+  } else {
+    Serial.print("Error on HTTP request (getting certificate from musicbox backend): ");
+    Serial.println(httpCode);
+  }
+  http.end();
+  
+  return nullptr;
+}
+
+
+void checkForUpdates() {
+  // Serial.println(getCertificate()); 
   
   HTTPClient http;
-  http.begin("http://52.7.199.236:3001/version");
+  http.begin("https://musicbox-backend-178z.onrender.com/version");
 
   int httpCode = http.GET();
   if (httpCode == HTTP_CODE_OK) {
@@ -100,10 +133,12 @@ void checkForUpdates() {
     if (latestVersion != firmware_version) {
       Serial.print("Update available! Version: ");
       Serial.println(latestVersion);
+
       // Store the version number so we can save it if success
       if (skipUpdates)
       {
         Serial.println("Skipping this update!");
+        
 
         // Store the latest version so that we do not install this version ever,
         // even when turning off update skips. Do we need to do this?
@@ -131,10 +166,16 @@ void checkForUpdates() {
 }
 
 void updateFirmware() {
+  // get certificate 
+  Serial.println("Fetching firmware certificate...");
+  const char* rootCACertificate = getCertificate();
+
   Serial.println("Updating firmware...");
 
-  WiFiClient client;
-  t_httpUpdate_return ret = httpUpdate.update(client, "http://52.7.199.236:3001/uploads/musicbox.bin");
+  
+  WiFiClientSecure client;
+  client.setCACert(rootCACertificate);
+  t_httpUpdate_return ret = httpUpdate.update(client, "https://musicbox-backend-178z.onrender.com/uploads/musicbox.bin");
 
   switch (ret) {
       case HTTP_UPDATE_FAILED:
@@ -153,6 +194,8 @@ void updateFirmware() {
         Serial.println("Error updating firmware");
         break;
     }
+
+    
 }
 
 void update_started() {
@@ -194,7 +237,10 @@ void update_error(int err) {
 // Mode 3 is booting (purple)
 // Mode 5 is success (flash green)
 void lights(int mode) {
-  
+  if (mode >= 0)
+  {
+    last_mode = mode;
+  }
 
   if (mode == 0) {
     digitalWrite(redPin, LOW);
@@ -247,6 +293,21 @@ void lights(int mode) {
   }
 }
 
+// Enter sleep mode 
+void enter_sleep()
+{
+  lights(-1);
+  sleeping = true;
+}
+
+// Wake up from sleep mode
+void leave_sleep()
+{
+  lights(last_mode);
+  sleeping = false;
+  sleep_start = millis();
+}
+
 void resetSettings()
 {
   // Callback function to reset WiFi settings
@@ -274,40 +335,18 @@ String clientSecret = "606bd9a5cbdc46afbd7841996e3feaef";
 
 
 String getSelectedPlaylist() {
-  bool A_selected = (digitalRead(playlistPin) == LOW);
-
-  // Choose playlist based on GPIO pin state
-  // voltage on 35 means B
-  if (A_selected)
-    Serial.println("A is selected");
-  else
-    Serial.println("B is selected");
-
-
   switch (quick_presses) {
         case 1:
         {
-          if (A_selected)
-            return musicbox_playlist_A1; // A is selected
-            return musicbox_playlist_B1; // B is selected
-
-          break;
+          return musicbox_playlist_1;
         }
         case 2:
         {
-          if (A_selected)
-            return musicbox_playlist_A2; // A is selected
-            return musicbox_playlist_B2; // B is selected
-
-          break;
+          return musicbox_playlist_2;
         }
         case 3:
         {
-          if (A_selected)
-            return musicbox_playlist_A3; // A is selected
-            return musicbox_playlist_B3; // B is selected
-
-          break;
+          return musicbox_playlist_3;
         }
         default:
             break;
@@ -405,7 +444,7 @@ String getOrCreatePlaylist(String playlistName, HTTPClient& httpClient) {
         // Playlist exists! Get the id.
         String playlist = extractPlaylistID(response, endIndex);
         Serial.print("Existing playlist: ");
-        Serial.println(playlist);
+        Serial.println(playlist); // playlist
 
         return playlist;
       }
@@ -426,11 +465,12 @@ String getOrCreatePlaylist(String playlistName, HTTPClient& httpClient) {
 
 
 String extractPlaylistID(const String& response, int endIndex) {
-  String substring = "\"id\" : ";
-
-  // Search the string in reverse order
-  for (int i = endIndex - substring.length(); i >= 0; --i) {
+  String substring = "\"id\":";
+  // Search the string in reverse order  - substring.length()
+  for (int i = endIndex; i >= 0; --i) {
+    // Serial.println(response.substring(i, i + substring.length()));
     if (response.substring(i, i + substring.length()) == substring) {
+      
       int idStartIndex = i + substring.length() + 1; // Move to the beginning of the ID value
       int idEndIndex = response.indexOf("\"", idStartIndex);
 
@@ -465,7 +505,7 @@ void addTrackToPlaylist(String trackURI) {
   int httpResponseCode = http.POST(jsonPayload);
 
   if (httpResponseCode > 0) {
-    if (httpResponseCode == HTTP_CODE_CREATED) {
+    if (httpResponseCode == HTTP_CODE_CREATED || httpResponseCode == HTTP_CODE_OK) {
       Serial.println("Track added to the playlist successfully!");
       //lights(5);
     } else {
@@ -587,7 +627,7 @@ String refreshAccessToken() {
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
 
   String requestBody = "grant_type=refresh_token&refresh_token=" + String(refresh_token);
-  Serial.println(requestBody);
+  // Serial.println(requestBody);
   
   int httpResponseCode = http.POST(requestBody);
 
@@ -627,7 +667,9 @@ void loadConfig()
 
     // Format on first time
     // Check if formatting is needed
-    if (!SPIFFS.exists("/formatted.txt")) {
+    if (force_format || !SPIFFS.exists("/formatted.txt")) {
+      // FIRST SETUP!
+      // Format and test lights.
       if(SPIFFS.format())
       {
         File flagFile = SPIFFS.open("/formatted.txt", "w");
@@ -636,7 +678,23 @@ void loadConfig()
           flagFile.close();
         }
 
-        Serial.println("SPIFFS initialized and formatted successfully");
+        Serial.println("SPIFFS initialized and formatted successfully. Testing lights now!");
+        // Test lights here
+        // since we just formatted, we won't try to update because we have no wifi. So, after the flash, config mode should open.
+        lights(-1);
+        delay(2000);
+        lights(2);
+        delay(1000);
+        lights(-1);
+        delay(1000);
+        lights(1);
+        delay(1000);
+        lights(-1);
+        delay(1000);
+        lights(0);
+        delay(1000);
+        lights(-1);
+
 
       }
       else
@@ -673,16 +731,15 @@ void loadConfig()
 
         if (json.success()) {
 #endif
-          // Update the local values to the stored
+          // Load stored values into local memory
           strcpy(musicbox_username, json["musicbox_username"]);
           strcpy(musicbox_password, json["musicbox_password"]);
-          strcpy(musicbox_playlist_A1, json["musicbox_playlist_A1"]);
-          strcpy(musicbox_playlist_A2, json["musicbox_playlist_A2"]);
-          strcpy(musicbox_playlist_A3, json["musicbox_playlist_A3"]);
+          strcpy(musicbox_playlist_1, json["musicbox_playlist_1"]);
+          strcpy(musicbox_playlist_2, json["musicbox_playlist_2"]);
+          strcpy(musicbox_playlist_3, json["musicbox_playlist_3"]);
+          strcpy(net_delay, json["net_delay"]);
+          strcpy(sleep_minutes, json["sleep_minutes"]);
 
-          strcpy(musicbox_playlist_B1, json["musicbox_playlist_B1"]);
-          strcpy(musicbox_playlist_B2, json["musicbox_playlist_B2"]);
-          strcpy(musicbox_playlist_B3, json["musicbox_playlist_B3"]);
 
 
           // Spotify tokens
@@ -695,13 +752,11 @@ void loadConfig()
           // Update the config portal values to the stored values
           custom_musicbox_username.setValue(musicbox_username, MAX_USERNAME_LEN);
           custom_musicbox_password.setValue(musicbox_password, MAX_PASSWORD_LEN);
-          custom_musicbox_playlist_A1.setValue(musicbox_playlist_A1, MAX_PLAYLIST_LEN);
-          custom_musicbox_playlist_A2.setValue(musicbox_playlist_A2, MAX_PLAYLIST_LEN);
-          custom_musicbox_playlist_A3.setValue(musicbox_playlist_A3, MAX_PLAYLIST_LEN);
-
-          custom_musicbox_playlist_B1.setValue(musicbox_playlist_B1, MAX_PLAYLIST_LEN);
-          custom_musicbox_playlist_B2.setValue(musicbox_playlist_B2, MAX_PLAYLIST_LEN);
-          custom_musicbox_playlist_B3.setValue(musicbox_playlist_B3, MAX_PLAYLIST_LEN);
+          custom_musicbox_playlist_1.setValue(musicbox_playlist_1, MAX_PLAYLIST_LEN);
+          custom_musicbox_playlist_2.setValue(musicbox_playlist_2, MAX_PLAYLIST_LEN);
+          custom_musicbox_playlist_3.setValue(musicbox_playlist_3, MAX_PLAYLIST_LEN);
+          custom_net_delay.setValue(net_delay, 3);
+          custom_sleep_minutes.setValue(sleep_minutes, 4);
 
 
         } else {
@@ -743,13 +798,11 @@ void saveConfig(bool reboot)
     // Save local params to disk
     json["musicbox_username"] = musicbox_username;
     json["musicbox_password"] = musicbox_password;
-    json["musicbox_playlist_A1"] = musicbox_playlist_A1;
-    json["musicbox_playlist_A2"] = musicbox_playlist_A2;
-    json["musicbox_playlist_A3"] = musicbox_playlist_A3;
-
-    json["musicbox_playlist_B1"] = musicbox_playlist_B1;
-    json["musicbox_playlist_B2"] = musicbox_playlist_B2;
-    json["musicbox_playlist_B3"] = musicbox_playlist_B3;
+    json["musicbox_playlist_1"] = musicbox_playlist_1;
+    json["musicbox_playlist_2"] = musicbox_playlist_2;
+    json["musicbox_playlist_3"] = musicbox_playlist_3;
+    json["net_delay"] = net_delay;
+    json["sleep_minutes"] = sleep_minutes;
 
 
     // Save spotify tokens (local values to disk)
@@ -803,13 +856,12 @@ void initializeConfigPortal()
   {
     wifiManager.addParameter(&custom_musicbox_username);
     wifiManager.addParameter(&custom_musicbox_password);
-    wifiManager.addParameter(&custom_musicbox_playlist_A1);
-    wifiManager.addParameter(&custom_musicbox_playlist_A2);
-    wifiManager.addParameter(&custom_musicbox_playlist_A3);
+    wifiManager.addParameter(&custom_musicbox_playlist_1);
+    wifiManager.addParameter(&custom_musicbox_playlist_2);
+    wifiManager.addParameter(&custom_musicbox_playlist_3);
+    wifiManager.addParameter(&custom_sleep_minutes);
+    wifiManager.addParameter(&custom_net_delay);
 
-    wifiManager.addParameter(&custom_musicbox_playlist_B1);
-    wifiManager.addParameter(&custom_musicbox_playlist_B2);
-    wifiManager.addParameter(&custom_musicbox_playlist_B3);
 
 
   }
@@ -921,6 +973,7 @@ void authenticate()
   else
   {
     // Success
+    sleep_start = millis(); // Set sleep timer to now
     Serial.println("Ready!");
     lights(1);
 
@@ -929,19 +982,17 @@ void authenticate()
 
 void closedConfigPortal()
 {
-  //read updated parameters
+  // store updated parameters into local memory
   strcpy(musicbox_username, custom_musicbox_username.getValue());
   strcpy(musicbox_password, custom_musicbox_password.getValue());
-  strcpy(musicbox_playlist_A1, custom_musicbox_playlist_A1.getValue());
-  strcpy(musicbox_playlist_A2, custom_musicbox_playlist_A2.getValue());
-  strcpy(musicbox_playlist_A2, custom_musicbox_playlist_A3.getValue());
-
-  strcpy(musicbox_playlist_B1, custom_musicbox_playlist_B1.getValue());
-  strcpy(musicbox_playlist_B2, custom_musicbox_playlist_B2.getValue());
-  strcpy(musicbox_playlist_B2, custom_musicbox_playlist_B3.getValue());
+  strcpy(musicbox_playlist_1, custom_musicbox_playlist_1.getValue());
+  strcpy(musicbox_playlist_2, custom_musicbox_playlist_2.getValue());
+  strcpy(musicbox_playlist_3, custom_musicbox_playlist_3.getValue());
+  strcpy(net_delay, custom_net_delay.getValue());
+  strcpy(sleep_minutes, custom_sleep_minutes.getValue());
 
 
-  callSaveConfig(false); // Will also store new version, if we updated
+  callSaveConfig(false); // Will also store new preferences in storage
   
 
   // Connected to wifi!
@@ -971,7 +1022,7 @@ void setup() {
   lights(3);
 
   pinMode(buttonPin, INPUT);
-  pinMode(playlistPin, INPUT);
+  //pinMode(playlistPin, INPUT); No longer using AB system
 
   pinMode(redPin, OUTPUT);
   pinMode(greenPin, OUTPUT);
@@ -981,6 +1032,15 @@ void setup() {
 
   
   initializeConfigPortal();
+  // Delay if necessary
+  int net_delay_int = atoi(net_delay);
+  if (net_delay_int != 0 || strcmp(net_delay, "0") == 0) {
+    if (net_delay_int > 0)
+    {
+      // Valid and positive network delay
+      delay(1000 * net_delay_int);
+    }
+  } 
 
   // Connect to Wi-Fi or start an Access Point if no credentials are stored
   // Synchronous call: Wait for this to finish
@@ -1011,12 +1071,21 @@ void loop() {
   // Run wifimanager
   wifiManager.process();
 
+  // Sleep feature
+  // Check if the amount of minutes has passed (if we are not already sleeping)
+  if (!sleeping && (((millis() - sleep_start) / 60000) >= std::stoi(sleep_minutes)))
+  {
+    enter_sleep();
+  }
+
+
 
   // Button presses
-
   if (quickpress_start > 0 && millis() - quickpress_start >= quickpress_window) {
     pressed = false;
     if (quick_presses > 0) {
+      // Postpone sleep 
+      sleep_start = millis();
       
       // Check the number of quick presses when the window expires
       if (quick_presses < 4) { // Single double or triple press: playlist
@@ -1047,8 +1116,10 @@ void loop() {
   if (digitalRead(buttonPin) == HIGH) {
     // When it is first pressed, start timer
     if (!pressed) {
+      
       pressed = true;
       press_begin = millis();
+      
     }
     // During the duration of the press, check if it is held to enter config mode
     else {
@@ -1060,24 +1131,37 @@ void loop() {
   }
   // Set pressed to false when the button is released (and pressed is true)
   else if (digitalRead(buttonPin) == LOW && pressed) {
+
     pressed = false;
     press_end = millis();
 
-    int press_duration = press_end - press_begin;
-
-    // After releasing, if it was a short press, call the appropriate function
-    if (press_duration < configModeDuration && press_duration > debounce) {
-      //Serial.println("Short press");
-
-      // Increment short presses for restart
-      quick_presses++;
-      // Serial.println(quick_presses);
-
-      // Check if it is the first press, if so start another timer for the quick press feature
-      if (quick_presses == 1) {
-        quickpress_start = millis(); // Store the time of the first short press.
-      }
+    if (sleeping) // then wake up ( do not use button )
+    {
+        leave_sleep();
     }
+
+    else // we were not sleeping, use button
+    {
+
+      int press_duration = press_end - press_begin;
+
+      // After releasing, if it was a short press, call the appropriate function
+      if (press_duration < configModeDuration && press_duration > debounce) {
+        //Serial.println("Short press");
+
+        // Increment short presses for restart
+        quick_presses++;
+        // Serial.println(quick_presses);
+
+        // Check if it is the first press, if so start another timer for the quick press feature
+        if (quick_presses == 1) {
+          quickpress_start = millis(); // Store the time of the first short press.
+        }
+      }
+
+    }
+
+    
   }
 
   
