@@ -11,6 +11,7 @@
  */
 
 #include "WiFiManager.h"
+#include <iostream>
 
 #if defined(ESP8266) || defined(ESP32)
 
@@ -261,6 +262,17 @@ void WiFiManager::_end(){
   // if(_usermode != WIFI_OFF) WiFi.mode(_usermode);
 }
 
+// Peter: Helper for AutoConnect
+void removeWhitespace(char* str) {
+    int count = 0;
+    for (int i = 0; str[i]; ++i) {
+        if (!isspace(str[i])) {
+            str[count++] = str[i];
+        }
+    }
+    str[count] = '\0';
+}
+
 // AUTOCONNECT
 
 boolean WiFiManager::autoConnect() {
@@ -275,7 +287,7 @@ boolean WiFiManager::autoConnect() {
  * @param  {[type]} char const         *apPassword [description]
  * @return {[type]}      [description]
  */
-boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
+boolean WiFiManager::autoConnect(char const *apName, char const *apPassword, char * ssid_csv, char * pass_csv) {
   #ifdef WM_DEBUG_LEVEL
   DEBUG_WM(F("AutoConnect"));
   #endif
@@ -324,6 +336,8 @@ boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
     // no getter for autoreconnectpolicy before this
     // https://github.com/esp8266/Arduino/pull/4359
     // so we must force it on else, if not connectimeout then waitforconnectionresult gets stuck endless loop
+
+    // PETER DISABLED THIS: I WANT TO ONLY USE MY METHOD. BECAUSE I MAY NOW BE NEAR A BETTER NETWORK. 
     WiFi_autoReconnect();
 
     #ifdef ESP8266
@@ -346,6 +360,8 @@ boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
       // and we have no idea WHAT we are connected to
     }
 
+    // This section will first try to connect to the last used wifi network (faster)
+
     if(connected || connectWifi(_defaultssid, _defaultpass) == WL_CONNECTED){
       //connected
       #ifdef WM_DEBUG_LEVEL
@@ -363,10 +379,118 @@ boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
       }
       return true; // connected success
     }
+    else // Failed to connect to previous network. try others
+    {
 
-    #ifdef WM_DEBUG_LEVEL
-    DEBUG_WM(F("AutoConnect: FAILED for "),(String)((millis()-_startconn)) + " ms");
-    #endif
+      // PETER CHANGES: Try to connect to secondary networks
+
+      struct WiFiNetwork {
+        char ssid[32]; // Assuming max SSID length is 32 characters
+        char password[64]; // Assuming max password length is 64 characters
+        int signalStrength;
+      };
+
+      #ifdef WM_DEBUG_LEVEL
+      DEBUG_WM(F("Trying additional networks: "), ssid_csv);
+      #endif
+
+      // Remove whitespace from ssid_csv and pass_csv
+      removeWhitespace(ssid_csv);
+      removeWhitespace(pass_csv);
+
+      // Split comma-separated values into arrays
+
+      // reentrant version requires a pointer which saves the current tokenized index of strtok, since strtok can not run simultaneously.
+      char *save_ptr1, *save_ptr2;
+      
+      char* ssidToken = strtok_r(ssid_csv, ",", &save_ptr1);
+      char* passToken = strtok_r(pass_csv, ",", &save_ptr2);
+
+      
+
+      // std::vector<WiFiNetwork> matchingNetworks; // networks given by user which are available
+      std::vector<WiFiNetwork> allNetworks; // All networks given by the user
+      WiFiNetwork bestNetwork;
+      int sigBase = -10000; // Represents negative infinity basically, where any signal at all is considered better than this. -100 should be absolute floor dBm
+      int bestSignal = sigBase;
+
+      // Tokenize the provided network CSV pair. Turn into a struct vector
+      while (ssidToken != NULL && passToken != NULL) {
+          WiFiNetwork network;
+          strcpy(network.ssid, ssidToken);
+          strcpy(network.password, passToken);
+          allNetworks.push_back(network);
+
+          ssidToken = strtok_r(NULL, ",", &save_ptr1);
+          passToken = strtok_r(NULL, ",", &save_ptr2);
+      }
+
+      // Scan WiFi networks and make an array of networks listed in the ssid array
+      // WiFi.mode(WIFI_STA);
+      WiFi.disconnect();   // do i need this
+
+      delay(100);
+      int numNetworks = WiFi.scanNetworks();
+      
+      // Find the best network which we specified and is also available
+      for (int i = 0; i < numNetworks; ++i) {
+        char currentSSID[32]; // Buffer to hold SSID
+        WiFi.SSID(i).toCharArray(currentSSID, sizeof(currentSSID));
+
+
+        for (auto& network : allNetworks) {
+          
+            if (strcmp(currentSSID, network.ssid) == 0) {
+              std::cout << network.ssid << ": "<< WiFi.RSSI(i) << std::endl;
+                
+                if (WiFi.RSSI(i) > bestSignal)
+                {
+                  // std::cout << "New signal found!" << std::endl;
+                  bestSignal = WiFi.RSSI(i);
+                  network.signalStrength = bestSignal; // store the strength
+                  bestNetwork = network;               // store this as the current best network
+                }
+                
+                break; // We had this network listed in our CSV. Move on to check if we also listed the next network, incase it has a better signal.
+            }
+        }
+    }
+
+    // Connect to network with the best signal
+    
+    if (bestSignal > sigBase) {
+      // We found a good network! Connect to it!
+      
+      WiFi.begin(bestNetwork.ssid, bestNetwork.password);
+
+      // // Wait in this loop until we connect, then return
+      while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+      }
+
+      if (WiFi.status() == WL_CONNECTED)
+      {
+        // Connected successfully
+        #ifdef WM_DEBUG_LEVEL
+        DEBUG_WM(F("AutoConnect: SUCCESS"));
+        DEBUG_WM(DEBUG_VERBOSE,F("Connected in"),(String)((millis()-_startconn)) + " ms");
+        DEBUG_WM(F("STA IP Address:"),WiFi.localIP());
+        #endif
+
+        return true;
+
+      }
+      
+    }
+
+    }
+    // done trying other networks. Since we did not return true, we did not find a network, We failed
+
+    
+
+  #ifdef WM_DEBUG_LEVEL
+  DEBUG_WM(F("AutoConnect: FAILED for "),(String)((millis()-_startconn)) + " ms");
+  #endif
   // }
   // else {
     // #ifdef WM_DEBUG_LEVEL
@@ -387,6 +511,8 @@ boolean WiFiManager::autoConnect(char const *apName, char const *apPassword) {
   bool res = startConfigPortal(apName, apPassword);
   return res;
 }
+
+
 
 bool WiFiManager::setupHostname(bool restart){
   if(_hostname == "") {
@@ -1387,6 +1513,11 @@ void WiFiManager::handleWifi(boolean scan) {
   pitem.replace(FPSTR(T_v), F("wifisave")); // set form action
   page += pitem;
 
+  // Setup HTML for showing stored wifi SSID
+  // ** Peter hid this (5/11/24) because the user instead enters a CSV ...
+  // It still stores the latest connection here, user doesnt need to change it. We always choose the best one if disconnected from pevious.
+
+/**
   pitem = FPSTR(HTTP_FORM_WIFI);
   pitem.replace(FPSTR(T_v), WiFi_SSID());
 
@@ -1399,8 +1530,10 @@ void WiFiManager::handleWifi(boolean scan) {
   else {
     pitem.replace(FPSTR(T_p),"");    
   }
+  
 
   page += pitem;
+  */
 
   page += getStaticOut();
   page += FPSTR(HTTP_FORM_WIFI_END);

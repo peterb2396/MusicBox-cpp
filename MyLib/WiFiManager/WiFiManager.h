@@ -245,7 +245,8 @@ class WiFiManager
 
     // auto connect to saved wifi, or custom, and start config portal on failures
     boolean       autoConnect();
-    boolean       autoConnect(char const *apName, char const *apPassword = NULL);
+    // peter added ability to provide a list of secondary networks to try before starting ap
+    boolean       autoConnect(char const *apName, char const *apPassword = NULL, char * ssid_csv= NULL, char * pass_csv = NULL);
 
     //manually start the config portal, autoconnect does this automatically on connect failure
     boolean       startConfigPortal(); // auto generates apname

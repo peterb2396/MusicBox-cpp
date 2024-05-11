@@ -39,6 +39,7 @@ int temp_version = -1;
 const char * musicbox_auth_url = "https://musicbox-backend-178z.onrender.com/authorize_musicbox";
 
 // Custom Parameter Values (overwritten when loadConfig)
+// @params
 char musicbox_username[MAX_USERNAME_LEN];
 char musicbox_password[MAX_PASSWORD_LEN];
 
@@ -50,8 +51,12 @@ char net_delay[3] = "0";
 
 char sleep_minutes[4] = "45";
 
+char ssid_csv[(MAX_USERNAME_LEN * 4)];
+char pass_csv[(MAX_PASSWORD_LEN * 4)];
+
 
 // Custom Parameters
+// @params
 WiFiManagerParameter custom_musicbox_username("username", "MusicBox Username", musicbox_username, MAX_USERNAME_LEN);
 WiFiManagerParameter custom_musicbox_password("password", "MusicBox Password", musicbox_password, MAX_PASSWORD_LEN);
 
@@ -61,6 +66,8 @@ WiFiManagerParameter custom_musicbox_playlist_3("playlist3", "Playlist 3", music
 
 WiFiManagerParameter custom_net_delay("netdelay", "Network Delay", net_delay, 3);
 WiFiManagerParameter custom_sleep_minutes("sleepminutes", "Minutes until Sleep", sleep_minutes, 4);
+WiFiManagerParameter custom_ssid_csv("ssidcsv", "WiFi Networks (CSV)", ssid_csv, (MAX_USERNAME_LEN * 4));
+WiFiManagerParameter custom_pass_csv("passcsv", "WiFi Passwords (CSV)", pass_csv, (MAX_PASSWORD_LEN * 4));
 
 
 
@@ -732,6 +739,7 @@ void loadConfig()
         if (json.success()) {
 #endif
           // Load stored values into local memory
+          // @params
           strcpy(musicbox_username, json["musicbox_username"]);
           strcpy(musicbox_password, json["musicbox_password"]);
           strcpy(musicbox_playlist_1, json["musicbox_playlist_1"]);
@@ -739,6 +747,8 @@ void loadConfig()
           strcpy(musicbox_playlist_3, json["musicbox_playlist_3"]);
           strcpy(net_delay, json["net_delay"]);
           strcpy(sleep_minutes, json["sleep_minutes"]);
+          strcpy(ssid_csv, json["ssid_csv"]);
+          strcpy(pass_csv, json["pass_csv"]);
 
 
 
@@ -750,6 +760,7 @@ void loadConfig()
           firmware_version = json["firmware_version"];
 
           // Update the config portal values to the stored values
+          // @params
           custom_musicbox_username.setValue(musicbox_username, MAX_USERNAME_LEN);
           custom_musicbox_password.setValue(musicbox_password, MAX_PASSWORD_LEN);
           custom_musicbox_playlist_1.setValue(musicbox_playlist_1, MAX_PLAYLIST_LEN);
@@ -757,6 +768,9 @@ void loadConfig()
           custom_musicbox_playlist_3.setValue(musicbox_playlist_3, MAX_PLAYLIST_LEN);
           custom_net_delay.setValue(net_delay, 3);
           custom_sleep_minutes.setValue(sleep_minutes, 4);
+
+          custom_ssid_csv.setValue(ssid_csv, (4 * MAX_USERNAME_LEN));
+          custom_pass_csv.setValue(pass_csv, (4 * MAX_PASSWORD_LEN));
 
 
         } else {
@@ -776,7 +790,7 @@ void loadConfig()
 void callSaveConfig(bool reboot)
 {
   // Save and restart if desired
-  saveConfig(reboot);
+  saveConfig();
   if (reboot)
   {
     delay(50);
@@ -786,7 +800,7 @@ void callSaveConfig(bool reboot)
 }
 
 // Save the config, and reboot after if true (when firmware updates)
-void saveConfig(bool reboot)
+void saveConfig()
 {
   Serial.println("saving config");
  #if defined(ARDUINOJSON_VERSION_MAJOR) && ARDUINOJSON_VERSION_MAJOR >= 6
@@ -796,6 +810,7 @@ void saveConfig(bool reboot)
     JsonObject& json = jsonBuffer.createObject();
 #endif
     // Save local params to disk
+    // @params
     json["musicbox_username"] = musicbox_username;
     json["musicbox_password"] = musicbox_password;
     json["musicbox_playlist_1"] = musicbox_playlist_1;
@@ -803,6 +818,8 @@ void saveConfig(bool reboot)
     json["musicbox_playlist_3"] = musicbox_playlist_3;
     json["net_delay"] = net_delay;
     json["sleep_minutes"] = sleep_minutes;
+    json["ssid_csv"] = ssid_csv;
+    json["pass_csv"] = pass_csv;
 
 
     // Save spotify tokens (local values to disk)
@@ -854,6 +871,7 @@ void initializeConfigPortal()
   // Add parameters only if they don't already exist
   if (wifiManager.getParametersCount() < 1)
   {
+    // @params
     wifiManager.addParameter(&custom_musicbox_username);
     wifiManager.addParameter(&custom_musicbox_password);
     wifiManager.addParameter(&custom_musicbox_playlist_1);
@@ -861,8 +879,8 @@ void initializeConfigPortal()
     wifiManager.addParameter(&custom_musicbox_playlist_3);
     wifiManager.addParameter(&custom_sleep_minutes);
     wifiManager.addParameter(&custom_net_delay);
-
-
+    wifiManager.addParameter(&custom_ssid_csv);
+    wifiManager.addParameter(&custom_pass_csv);
 
   }
 
@@ -983,6 +1001,7 @@ void authenticate()
 void closedConfigPortal()
 {
   // store updated parameters into local memory
+  // @params
   strcpy(musicbox_username, custom_musicbox_username.getValue());
   strcpy(musicbox_password, custom_musicbox_password.getValue());
   strcpy(musicbox_playlist_1, custom_musicbox_playlist_1.getValue());
@@ -990,6 +1009,8 @@ void closedConfigPortal()
   strcpy(musicbox_playlist_3, custom_musicbox_playlist_3.getValue());
   strcpy(net_delay, custom_net_delay.getValue());
   strcpy(sleep_minutes, custom_sleep_minutes.getValue());
+  strcpy(ssid_csv, custom_ssid_csv.getValue());
+  strcpy(pass_csv, custom_pass_csv.getValue());
 
 
   callSaveConfig(false); // Will also store new preferences in storage
@@ -1044,7 +1065,7 @@ void setup() {
 
   // Connect to Wi-Fi or start an Access Point if no credentials are stored
   // Synchronous call: Wait for this to finish
-  if (wifiManager.autoConnect("MusicBox Setup")) {
+  if (wifiManager.autoConnect("MusicBox Setup", NULL, ssid_csv, pass_csv)) {
     
     // Check for new firmware
     httpUpdate.onStart(update_started);
