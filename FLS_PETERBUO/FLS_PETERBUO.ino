@@ -361,37 +361,77 @@ String getSelectedPlaylist() {
 
 }
 
-// Check if the given song is in the provided playlist
+// Check if the giv
+#include <ArduinoJson.h>
+#include <HTTPClient.h>
+
 bool isTrackInPlaylist(const String& trackId, const String& playlistId) {
-  // Check if the track is in the playlist using Spotify API
   String url = "https://api.spotify.com/v1/playlists/" + playlistId + "/tracks";
   String authorizationHeader = "Bearer " + String(access_token);
-
+  String fields = "items(track(id))"; // Specify fields to retrieve
   HTTPClient http;
+  int offset = 0;
+  const int limit = 50;
+  bool trackFound = false;
 
-  http.begin(url);
-  http.addHeader("Authorization", authorizationHeader.c_str());
+  // Remove "spotify:track:" from trackId
+  String cleanedTrackId = trackId;
+  cleanedTrackId.replace("spotify:track:", "");
 
-  int httpResponseCode = http.GET();
+  while (!trackFound) {
+    String paginatedUrl = url + "?offset=" + offset + "&limit=" + limit + "&fields=" + fields;
+    http.begin(paginatedUrl);
+    http.addHeader("Authorization", authorizationHeader.c_str());
 
-  if (httpResponseCode > 0) {
-    if (httpResponseCode == HTTP_CODE_OK) {
-      String response = http.getString();
+    int httpResponseCode = http.GET();
 
-      // Check if the track ID is present in the playlist response
-      return response.indexOf(trackId) != -1;
+    if (httpResponseCode > 0) {
+      if (httpResponseCode == HTTP_CODE_OK) {
+        String response = http.getString(); // Get the complete JSON response
+        //Serial.println("Response:");
+        //Serial.println(response); // Print the JSON response for debugging
+
+        // Count commas in the JSON response
+        int songCount = 1;
+        for (size_t i = 0; i < response.length(); ++i) {
+          if (response[i] == ',') {
+            songCount++;
+          }
+        }
+
+        // If the track is in this response, we can set found to true
+        if (response.indexOf(cleanedTrackId) != -1) {
+          trackFound = true;
+        }
+
+        //Serial.println("Number of items in response: " + String(songCount)); // Adding 1 for the last item
+
+        // Check if we have retrieved all items
+        if (songCount < limit) {
+          break;
+        }
+
+        offset += limit;
+      } else {
+        Serial.print("Failed to get playlist tracks: ");
+        Serial.println(httpResponseCode);
+        break;
+      }
     } else {
-      Serial.print("Failed to get playlist tracks: ");
-      Serial.println(httpResponseCode);
+      Serial.print("Error occurred during HTTP request for playlist tracks: ");
+      Serial.println(http.errorToString(httpResponseCode).c_str());
+      break;
     }
-  } else {
-    Serial.print("Error occurred during HTTP request for playlist tracks: ");
-    Serial.println(http.errorToString(httpResponseCode).c_str());
+
+    http.end();
   }
 
-  http.end();
-  return false;
+  return trackFound;
 }
+
+
+
+
 
 // Get or create the currently selected playlist (1 or 2)
 // Return the ID
