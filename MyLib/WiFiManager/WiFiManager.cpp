@@ -768,8 +768,8 @@ void WiFiManager::setupHTTPServer(){
   // G macro workaround for Uri() bug https://github.com/esp8266/Arduino/issues/7102
   
   // I changed the root to redirect to the wifi page exactly as in the R_wifi route.
-  server->on(WM_G(R_root),       std::bind(&WiFiManager::handleWifi, this, true));
-  server->on(WM_G(R_wifi),       std::bind(&WiFiManager::handleWifi, this, true));
+  server->on(WM_G(R_root),       std::bind(&WiFiManager::handleWifi, this, (WiFi.status() != WL_CONNECTED)));
+  server->on(WM_G(R_wifi),       std::bind(&WiFiManager::handleWifi, this, (WiFi.status() != WL_CONNECTED)));
   server->on(WM_G(R_wifinoscan), std::bind(&WiFiManager::handleWifi, this, false));
   server->on(WM_G(R_wifisave),   std::bind(&WiFiManager::handleWifiSave, this));
   server->on(WM_G(R_info),       std::bind(&WiFiManager::handleInfo, this));

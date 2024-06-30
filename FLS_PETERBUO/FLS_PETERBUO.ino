@@ -53,6 +53,7 @@ char sleep_minutes[4] = "45";
 
 char ssid_csv[(MAX_USERNAME_LEN * 4)];
 char pass_csv[(MAX_PASSWORD_LEN * 4)];
+char pw[MAX_PASSWORD_LEN];
 
 
 // Custom Parameters
@@ -68,6 +69,8 @@ WiFiManagerParameter custom_net_delay("netdelay", "Network Delay", net_delay, 3)
 WiFiManagerParameter custom_sleep_minutes("sleepminutes", "Minutes until Sleep", sleep_minutes, 4);
 WiFiManagerParameter custom_ssid_csv("ssidcsv", "WiFi Networks (CSV)", ssid_csv, (MAX_USERNAME_LEN * 4));
 WiFiManagerParameter custom_pass_csv("passcsv", "WiFi Passwords (CSV)", pass_csv, (MAX_PASSWORD_LEN * 4));
+
+WiFiManagerParameter custom_pw("pw", "Portal Password", pw, sizeof(pw));
 
 
 
@@ -105,7 +108,7 @@ int last_mode = 0;
 const char* getCertificate() {
 
   HTTPClient http;
-  http.begin("https://musicbox-backend-178z.onrender.com/certificate");  // Replace with your server's domain
+  http.begin("https://musicbox-backend-178z.onrender.com/certificate");
   int httpCode = http.GET();
   if (httpCode > 0) {
     if (httpCode == HTTP_CODE_OK) {
@@ -654,7 +657,9 @@ void displayError(bool fatal)
   if (fatal)
   {
     initializeConfigPortal();
-    wifiManager.startConfigPortal("MusicBox Setup");
+    Serial.print("Pass: ");
+    Serial.println(pw);
+    wifiManager.startConfigPortal("MusicBox Setup", pw);
   }
   else
   {
@@ -789,6 +794,7 @@ void loadConfig()
           strcpy(sleep_minutes, json["sleep_minutes"]);
           strcpy(ssid_csv, json["ssid_csv"]);
           strcpy(pass_csv, json["pass_csv"]);
+          strcpy(pw, json["pw"]);
 
 
 
@@ -811,6 +817,8 @@ void loadConfig()
 
           custom_ssid_csv.setValue(ssid_csv, (4 * MAX_USERNAME_LEN));
           custom_pass_csv.setValue(pass_csv, (4 * MAX_PASSWORD_LEN));
+
+          custom_pw.setValue(pw, sizeof(pw));
 
 
         } else {
@@ -860,6 +868,8 @@ void saveConfig()
     json["sleep_minutes"] = sleep_minutes;
     json["ssid_csv"] = ssid_csv;
     json["pass_csv"] = pass_csv;
+    json["pw"] = pw;
+
 
 
     // Save spotify tokens (local values to disk)
@@ -921,6 +931,8 @@ void initializeConfigPortal()
     wifiManager.addParameter(&custom_net_delay);
     wifiManager.addParameter(&custom_ssid_csv);
     wifiManager.addParameter(&custom_pass_csv);
+    wifiManager.addParameter(&custom_pw);
+
 
   }
 
@@ -1051,6 +1063,8 @@ void closedConfigPortal()
   strcpy(sleep_minutes, custom_sleep_minutes.getValue());
   strcpy(ssid_csv, custom_ssid_csv.getValue());
   strcpy(pass_csv, custom_pass_csv.getValue());
+  strcpy(pw, custom_pw.getValue());
+
 
 
   callSaveConfig(false); // Will also store new preferences in storage
@@ -1074,7 +1088,9 @@ void startConfigPortal()
   {
     Serial.println("Entering Config");
     initializeConfigPortal();
-    wifiManager.startConfigPortal("MusicBox Setup");
+    Serial.print("Pass: ");
+    Serial.println(pw);
+    wifiManager.startConfigPortal("MusicBox Setup", pw);
   }
 }
 
@@ -1105,7 +1121,9 @@ void setup() {
 
   // Connect to Wi-Fi or start an Access Point if no credentials are stored
   // Synchronous call: Wait for this to finish
-  if (wifiManager.autoConnect("MusicBox Setup", NULL, ssid_csv, pass_csv)) {
+  Serial.print("Pass: ");
+  Serial.println(pw);
+  if (wifiManager.autoConnect("MusicBox Setup", pw, ssid_csv, pass_csv)) {
     
     // Check for new firmware
     httpUpdate.onStart(update_started);

@@ -9,3 +9,8 @@ Added configClosedCallback (WiFiManager.cpp, WiFiManager.h)
 - modified autoConnect function to accommodate the new feature where if connecting to the stored SSID fails (existing logic), we check a CSV list of SSID's provided by the user, and connect to the one with the best signal. Provided a removeWhitespace helper function to tokenize each CSV.
 
 - modified HTML in handleWifi function to comment out SSID / password. Due to the above feature, the user does not enter a wifi here, instead, they enter a list of wifi networks. The latest will always be stored on the system to auto connect to that one as a priority. This network will change whenever it fails and finds a more suitable one, this is all behind the scenes, so the user does not need to modify this stored value. 
+
+6/29/24
+- I'm only showing wifi list if wifi is not connected.
+- Line 770 *server->on section* made scan bool param "(WiFi.status() != WL_CONNECTED)" cpp file
+- When I do click a WiFi, I want to add it to the custom param CSV
