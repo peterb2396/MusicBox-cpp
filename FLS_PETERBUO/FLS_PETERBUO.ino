@@ -657,9 +657,7 @@ void displayError(bool fatal)
   if (fatal)
   {
     initializeConfigPortal();
-    Serial.print("Pass: ");
-    Serial.println(pw);
-    wifiManager.startConfigPortal("MusicBox Setup", pw);
+    wifiManager.startConfigPortal(formSSID(), pw);
   }
   else
   {
@@ -710,6 +708,29 @@ String refreshAccessToken() {
 
   http.end();
   return newAccessToken;
+}
+
+const char * formSSID()
+{
+  // Form the Network name from the stored username, if it exists
+  static std::string network_name_str;
+
+  if (strlen(musicbox_username) > 1) {
+    // Create a std::string from the username
+    std::string username_str(musicbox_username);
+
+    // Get the first 21 characters (or fewer if the username is shorter)
+    network_name_str = "MusicBox (" + username_str.substr(0, 21) + ")";
+
+    // Truncate network_name_str to ensure it does not exceed 32 characters
+    network_name_str = network_name_str.substr(0, MAX_SSID_LEN - 1);
+
+  } else {
+      // Copy "MusicBox Setup" to network_name
+      network_name_str = "MusicBox Setup";
+  }
+
+  return network_name_str.c_str();
 }
 
 void loadConfig()
@@ -795,6 +816,8 @@ void loadConfig()
           strcpy(ssid_csv, json["ssid_csv"]);
           strcpy(pass_csv, json["pass_csv"]);
           strcpy(pw, json["pw"]);
+
+          formSSID();
 
 
 
@@ -1088,9 +1111,7 @@ void startConfigPortal()
   {
     Serial.println("Entering Config");
     initializeConfigPortal();
-    Serial.print("Pass: ");
-    Serial.println(pw);
-    wifiManager.startConfigPortal("MusicBox Setup", pw);
+    wifiManager.startConfigPortal(formSSID(), pw);
   }
 }
 
@@ -1121,9 +1142,7 @@ void setup() {
 
   // Connect to Wi-Fi or start an Access Point if no credentials are stored
   // Synchronous call: Wait for this to finish
-  Serial.print("Pass: ");
-  Serial.println(pw);
-  if (wifiManager.autoConnect("MusicBox Setup", pw, ssid_csv, pass_csv)) {
+  if (wifiManager.autoConnect(formSSID(), pw, ssid_csv, pass_csv)) {
     
     // Check for new firmware
     httpUpdate.onStart(update_started);
